@@ -60,9 +60,49 @@ romyq run /path/to/existing/repo
 
 ## Commands
 
+### `romyq attach [path]`
+
+Attaches Romyq to an **existing** repository. Safe to run on any project —
+never modifies application code, never creates commits, never initializes git.
+
+```bash
+cd myproject
+romyq attach          # attaches to current directory
+romyq attach /path/to/repo
+```
+
+What it does:
+- Creates `{repo}/.romyq/` for state storage
+- Adds `.romyq/` to the repo's `.gitignore`
+- Creates `mission.md` in the current directory if absent
+
+### `romyq info [path]`
+
+Shows what Romyq detects about a repository before starting a run.
+
+```bash
+romyq info            # inspect current directory
+romyq info /path/to/repo
+```
+
+Example output:
+```
+  Language:         python
+  Frameworks:       FastAPI, SQLAlchemy
+  Test suite:       pytest  (dirs: tests/  |  config: pytest.ini)
+  Build:            make dev
+                    make test
+                    pytest
+  Branch:           main
+
+  Mission:          ✓  found
+  Tasks:            0 completed  (status: running)
+  State dir:        ✓  /path/to/repo/.romyq/
+```
+
 ### `romyq init [workspace]`
 
-Initializes a new project. Creates `mission.md` if it does not exist and
+Initializes a **new** project. Creates `mission.md` if it does not exist and
 bootstraps the workspace as a git repository.
 
 ```bash

@@ -458,10 +458,16 @@ def _annotated_dirs(root: Path) -> list[str]:
 
 # ── main profile ──────────────────────────────────────────────────────────────
 
-def profile(path: str) -> str:
+def detect(path: str) -> dict:
+    """Return structured detection results for a workspace.
+
+    Keys: language, frameworks, test_framework, test_detail, dev_tools,
+          build_commands, branches, entry_points, structure, root_files.
+    Returns an empty dict if the path does not exist.
+    """
     root = Path(path)
     if not root.is_dir():
-        return "Workspace does not exist."
+        return {}
 
     lang = _project_type(path)
 
@@ -476,16 +482,35 @@ def profile(path: str) -> str:
     else:
         frameworks, test_fw, tools = [], None, []
 
+    return {
+        "language": lang,
+        "frameworks": frameworks,
+        "test_framework": test_fw,
+        "test_detail": _detect_test_suite(root),
+        "dev_tools": tools,
+        "build_commands": _detect_build_commands(root, lang),
+        "branches": _detect_branches(path),
+        "entry_points": _detect_entry_points(root),
+        "structure": _annotated_dirs(root),
+        "root_files": [name for name in ROOT_FILES if (root / name).exists()],
+    }
+
+
+def profile(path: str) -> str:
+    d = detect(path)
+    if not d:
+        return "Workspace does not exist."
+
     lines: list[str] = []
 
-    lines.append(f"Language: {lang}")
-    if frameworks:
-        lines.append(f"Frameworks/Libraries: {', '.join(frameworks)}")
-    if tools:
-        lines.append(f"Dev Tools: {', '.join(tools)}")
+    lines.append(f"Language: {d['language']}")
+    if d["frameworks"]:
+        lines.append(f"Frameworks/Libraries: {', '.join(d['frameworks'])}")
+    if d["dev_tools"]:
+        lines.append(f"Dev Tools: {', '.join(d['dev_tools'])}")
 
-    # test suite
-    suite_detail = _detect_test_suite(root)
+    test_fw = d["test_framework"]
+    suite_detail = d["test_detail"]
     if test_fw and suite_detail:
         lines.append(f"Test Suite: {test_fw}  |  {suite_detail}")
     elif test_fw:
@@ -495,32 +520,19 @@ def profile(path: str) -> str:
     else:
         lines.append("Test Suite: none detected")
 
-    # build commands
-    cmds = _detect_build_commands(root, lang)
-    if cmds:
-        lines.append(f"Build Commands: {', '.join(cmds)}")
+    if d["build_commands"]:
+        lines.append(f"Build Commands: {', '.join(d['build_commands'])}")
+    if d["branches"]:
+        lines.append(f"Active Branches: {', '.join(d['branches'])}")
+    if d["entry_points"]:
+        lines.append(f"Entry Points: {', '.join(d['entry_points'])}")
 
-    # branches
-    branches = _detect_branches(path)
-    if branches:
-        lines.append(f"Active Branches: {', '.join(branches)}")
-
-    # entry points
-    entries = _detect_entry_points(root)
-    if entries:
-        lines.append(f"Entry Points: {', '.join(entries)}")
-
-    # directory structure
-    dirs = _annotated_dirs(root)
-    root_files = [name for name in ROOT_FILES if (root / name).exists()]
-
-    if dirs:
+    if d["structure"]:
         lines.append("Structure:")
-        for d in dirs:
-            lines.append(f"  {d}")
-
-    if root_files:
-        lines.append(f"Root Files: {', '.join(root_files)}")
+        for item in d["structure"]:
+            lines.append(f"  {item}")
+    if d["root_files"]:
+        lines.append(f"Root Files: {', '.join(d['root_files'])}")
 
     return "\n".join(lines)
 
