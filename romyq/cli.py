@@ -100,9 +100,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     claude_bin = shutil.which("claude")
     check("claude CLI", bool(claude_bin), claude_bin or "not found in PATH")
 
+    git_bin = shutil.which("git")
+    check("git", bool(git_bin), git_bin or "not found in PATH — install git")
+
     check("mission.md", mission_exists(), "found" if mission_exists() else "missing — run 'romyq init'")
 
-    workspace_path = os.getenv("ROMYQ_WORKSPACE", "workspace")
+    workspace_path = args.workspace or os.getenv("ROMYQ_WORKSPACE", "workspace")
     workspace_exists = Path(workspace_path).exists()
     check(f"workspace ({workspace_path}/)", workspace_exists, "exists" if workspace_exists else "missing — run 'romyq init'")
 
@@ -154,6 +157,12 @@ def main() -> None:
     p_logs.set_defaults(func=cmd_logs)
 
     p_doctor = sub.add_parser("doctor", help="Check environment and configuration")
+    p_doctor.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+    )
     p_doctor.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args()

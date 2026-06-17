@@ -90,6 +90,8 @@ def diff_stat(path: str) -> str:
 
 
 def inspect(path: str) -> dict:
+    if not Path(path).is_dir():
+        return {"git_log": "", "git_status": "", "latest_commit": "", "diff_stat": ""}
     return {
         "git_log": git_log(path),
         "git_status": git_status(path),
@@ -119,6 +121,9 @@ def _project_type(path: str) -> str:
 
 def summary_text(path: str) -> str:
     root = Path(path)
+
+    if not root.is_dir():
+        return "Workspace does not exist."
 
     important = [name for name in ROOT_FILES if (root / name).exists()]
     directories = sorted(item.name for item in root.iterdir() if item.is_dir())
