@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from dotenv import load_dotenv
 
@@ -28,9 +29,15 @@ from bootstrap import bootstrap_workspace
 
 load_dotenv()
 
-WORKSPACE = "workspace"
 STATE_FILE = "state.json"
 STATE_MD = "state.md"
+
+
+def parse_args() -> str:
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+
+    return os.getenv("ROMIQ_WORKSPACE", "workspace")
 
 
 def read_file(path: str) -> str:
@@ -90,35 +97,25 @@ Reason:
 
 
 def main() -> None:
-    api_key = os.getenv(
-        "DEEPSEEK_API_KEY"
-    )
+    api_key = os.getenv("DEEPSEEK_API_KEY")
 
     if not api_key:
-        raise RuntimeError(
-            "DEEPSEEK_API_KEY missing"
-        )
+        raise RuntimeError("DEEPSEEK_API_KEY missing")
 
-    bootstrap_workspace(WORKSPACE)
+    workspace = parse_args()
+
+    bootstrap_workspace(workspace)
 
     while True:
-        state = load_state(
-            STATE_FILE
-        )
+        state = load_state(STATE_FILE)
 
         heartbeat(state)
 
         mission = load_mission()
 
-        state_text = read_file(
-            STATE_MD
-        )
+        state_text = read_file(STATE_MD)
 
-        repo_before = (
-            inspect_repository(
-                WORKSPACE
-            )
-        )
+        repo_before = inspect_repository(workspace)
 
         mode = next_mode(state)
 
@@ -126,72 +123,39 @@ def main() -> None:
             api_key=api_key,
             mission=mission,
             state=state_text,
-            tasks_completed=state[
-                "tasks_completed"
-            ],
-            git_log=repo_before[
-                "git_log"
-            ],
-            git_status=repo_before[
-                "git_status"
-            ],
+            tasks_completed=state["tasks_completed"],
+            git_log=repo_before["git_log"],
+            git_status=repo_before["git_status"],
             mode=mode,
-            workspace=WORKSPACE,
+            workspace=workspace,
         )
 
-        print(
-            "\n"
-            + "=" * 80
-        )
+        print("\n" + "=" * 80)
         print("MODE:", mode)
-        print(
-            "=" * 80
-        )
+        print("=" * 80)
         print(task)
-        print(
-            "=" * 80
+        print("=" * 80)
+
+        set_current_task(state, task)
+
+        save_state(state, STATE_FILE)
+
+        before_commit = repo_before["latest_commit"]
+
+        result = run_claude_with_retry(
+            workspace=workspace,
+            task=task,
         )
 
-        set_current_task(
-            state,
-            task,
-        )
+        repo_after = inspect_repository(workspace)
 
-        save_state(
-            state,
-            STATE_FILE,
-        )
-
-        before_commit = (
-            repo_before[
-                "latest_commit"
-            ]
-        )
-
-        result = (
-            run_claude_with_retry(
-                workspace=WORKSPACE,
-                task=task,
-            )
-        )
-
-        repo_after = (
-            inspect_repository(
-                WORKSPACE
-            )
-        )
-
-        after_commit = (
-            repo_after[
-                "latest_commit"
-            ]
-        )
+        after_commit = repo_after["latest_commit"]
 
         (
             validation_ok,
             validation_reason,
         ) = validate_task(
-            workspace=WORKSPACE,
+            workspace=workspace,
             before_commit=before_commit,
             after_commit=after_commit,
             claude_returncode=result.returncode,
@@ -205,39 +169,23 @@ def main() -> None:
             validation_reason=validation_reason,
         )
 
-        set_last_commit(
-            state,
-            after_commit,
-        )
+        set_last_commit(state, after_commit)
 
         if validation_ok:
-            increment_tasks(
-                state
-            )
+            increment_tasks(state)
 
             if mode == "audit":
-                mark_audit_complete(
-                    state
-                )
+                mark_audit_complete(state)
 
-            print(
-                "\nVALIDATION PASSED"
-            )
+            print("\nVALIDATION PASSED")
 
         else:
-            print(
-                "\nVALIDATION FAILED"
-            )
-            print(
-                validation_reason
-            )
+            print("\nVALIDATION FAILED")
+            print(validation_reason)
 
         heartbeat(state)
 
-        save_state(
-            state,
-            STATE_FILE,
-        )
+        save_state(state, STATE_FILE)
 
         write_state_md(
             task=task,
@@ -248,12 +196,7 @@ def main() -> None:
             validation_reason=validation_reason,
         )
 
-        print(
-            "\nTOTAL TASKS:",
-            state[
-                "tasks_completed"
-            ],
-        )
+        print("\nTOTAL TASKS:", state["tasks_completed"])
 
         time.sleep(10)
 
