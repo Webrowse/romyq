@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "romiq"
+name = "romyq"
 version = "0.1.0"
 description = "Autonomous AI software project manager"
 requires-python = ">=3.11"
@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.scripts]
-romiq = "romiq.cli:main"
+romyq = "romyq.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["romiq*"]
+include = ["romyq*"]

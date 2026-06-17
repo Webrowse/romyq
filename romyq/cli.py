@@ -27,17 +27,17 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("\nNext steps:")
     print("  1. Edit mission.md")
     print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
-    print("  3. Run: romiq run")
+    print("  3. Run: romyq run")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    workspace_path = args.workspace or os.getenv("ROMIQ_WORKSPACE", "workspace")
+    workspace_path = args.workspace or os.getenv("ROMYQ_WORKSPACE", "workspace")
 
     if not mission_exists():
-        print("Error: mission.md not found. Run 'romiq init' first.")
+        print("Error: mission.md not found. Run 'romyq init' first.")
         sys.exit(1)
 
     from .loop import run
@@ -48,7 +48,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     try:
         state = load_state(STATE_FILE)
     except Exception:
-        print("No state found. Has romiq been run yet?")
+        print("No state found. Has romyq been run yet?")
         sys.exit(1)
 
     print(f"Status:          {state['status']}")
@@ -94,7 +94,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         if not passed:
             ok = False
 
-    print("romiq doctor\n")
+    print("romyq doctor\n")
 
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     check("DEEPSEEK_API_KEY", bool(api_key), "set" if api_key else "missing — add to .env")
@@ -102,19 +102,19 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     claude_bin = shutil.which("claude")
     check("claude CLI", bool(claude_bin), claude_bin or "not found in PATH")
 
-    check("mission.md", mission_exists(), "found" if mission_exists() else "missing — run 'romiq init'")
+    check("mission.md", mission_exists(), "found" if mission_exists() else "missing — run 'romyq init'")
 
-    workspace_path = os.getenv("ROMIQ_WORKSPACE", "workspace")
+    workspace_path = os.getenv("ROMYQ_WORKSPACE", "workspace")
     workspace_exists = Path(workspace_path).exists()
-    check(f"workspace ({workspace_path}/)", workspace_exists, "exists" if workspace_exists else "missing — run 'romiq init'")
+    check(f"workspace ({workspace_path}/)", workspace_exists, "exists" if workspace_exists else "missing — run 'romyq init'")
 
     if workspace_exists:
         git_ok = is_git_repo(workspace_path)
-        check("workspace is a git repo", git_ok, "yes" if git_ok else "run 'romiq init'")
+        check("workspace is a git repo", git_ok, "yes" if git_ok else "run 'romyq init'")
 
     print()
     if ok:
-        print("All checks passed. Ready to run: romiq run")
+        print("All checks passed. Ready to run: romyq run")
     else:
         print("Some checks failed. Fix the issues above before running.")
         sys.exit(1)
@@ -122,15 +122,15 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="romiq",
+        prog="romyq",
         description="Autonomous AI software project manager.",
     )
-    parser.add_argument("--version", action="version", version=f"romiq {__version__}")
+    parser.add_argument("--version", action="version", version=f"romyq {__version__}")
 
     sub = parser.add_subparsers(dest="command", metavar="command")
     sub.required = True
 
-    p_init = sub.add_parser("init", help="Initialize a new romiq project")
+    p_init = sub.add_parser("init", help="Initialize a new romyq project")
     p_init.add_argument(
         "workspace",
         nargs="?",
@@ -144,7 +144,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMIQ_WORKSPACE or workspace/)",
+        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
     )
     p_run.set_defaults(func=cmd_run)
 

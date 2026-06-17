@@ -22,7 +22,7 @@ def load() -> str:
 
     if not path.exists():
         raise FileNotFoundError(
-            f"{MISSION_FILE} not found — run 'romiq init' first"
+            f"{MISSION_FILE} not found — run 'romyq init' first"
         )
 
     return path.read_text()
