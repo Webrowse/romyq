@@ -1,8 +1,9 @@
+import hashlib
 import os
 import time
 
 from . import activity, manager, runner, workspace as ws
-from .findings import extract_from_output
+from .findings import add_finding, extract_from_output
 from .history import add_entry
 from .mission import load
 from .state import (
@@ -21,6 +22,38 @@ from .validator import validate
 
 STATE_FILE = "state.json"
 STATE_MD = "state.md"
+
+# Failure thresholds
+_SAME_TASK_THRESHOLD = 3    # same task key fails this many times → diagnosis
+_DIAGNOSIS_GIVEUP = 3       # diagnosis fails this many times → record finding + reset
+_CONSECUTIVE_THRESHOLD = 8  # any-task consecutive failures → record finding + reset
+
+_DIAGNOSIS_TASK = """\
+DIAGNOSIS: The following task has failed {n} consecutive times and progress is blocked.
+
+Stuck task:
+{context}
+
+Your job:
+
+1. Review git log and repository state carefully.
+2. Identify what is blocking progress — look for broken code, failed tests,
+   missing dependencies, config errors, or incorrect assumptions.
+3. Fix the most fundamental blocking issue you find.
+4. Commit the fix with a clear message explaining what was broken.
+
+If nothing can be committed, create or update BLOCKERS.md documenting
+what is preventing progress and why, then commit that file.
+"""
+
+
+def _make_diagnosis_task(stuck_task: str, n: int) -> str:
+    context = stuck_task[:600] + ("..." if len(stuck_task) > 600 else "")
+    return _DIAGNOSIS_TASK.format(n=n, context=context)
+
+
+def _task_key(task: str) -> str:
+    return hashlib.md5(task.encode()).hexdigest()[:12]
 
 
 def _read(path: str) -> str:
@@ -60,6 +93,13 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     ws.bootstrap(workspace_path)
     activity.log("Romyq started.")
 
+    # Failure tracking (in-memory; resets on restart)
+    same_task_streak: int = 0          # consecutive failures on the same task hash
+    last_failed_key: str | None = None # hash of the last failed task
+    consecutive_failures: int = 0      # any consecutive failure (different tasks)
+    in_diagnosis: bool = False         # currently running a diagnosis task
+    diagnosis_failures: int = 0        # consecutive diagnosis task failures
+
     while True:
         state = load_state(STATE_FILE)
         heartbeat(state)
@@ -70,7 +110,6 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         mode = next_mode(state)
         task_num = state["tasks_completed"] + 1
-        activity.log(f"Task {task_num}  mode={mode}")
 
         already_complete = state["status"] == "completed"
         run_check = state["tasks_completed"] > 0 and (until_complete or not already_complete)
@@ -95,19 +134,44 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             else:
                 activity.log(f"Continuing — {reason}")
 
-        activity.log("Asking DeepSeek...")
-        task = manager.generate_task(
-            api_key=api_key,
-            mission=mission,
-            state=state_text,
-            tasks_completed=state["tasks_completed"],
-            git_log=repo_before["git_log"],
-            git_status=repo_before["git_status"],
-            mode=mode,
-            workspace=workspace_path,
-        )
-        activity.log("Task generated.")
-        print(f"\n{task}\n")
+        # ── task selection ────────────────────────────────────────────────────
+
+        if in_diagnosis:
+            mode = "audit"
+            task = _make_diagnosis_task(state.get("current_task", ""), same_task_streak)
+            key = "__diagnosis__"
+            activity.log(
+                f"Task {task_num}  mode=diagnosis  "
+                f"(attempt {diagnosis_failures + 1}/{_DIAGNOSIS_GIVEUP})"
+            )
+            print(f"\n{task}\n")
+        else:
+            activity.log(f"Task {task_num}  mode={mode}")
+            activity.log("Asking DeepSeek...")
+            task = manager.generate_task(
+                api_key=api_key,
+                mission=mission,
+                state=state_text,
+                tasks_completed=state["tasks_completed"],
+                git_log=repo_before["git_log"],
+                git_status=repo_before["git_status"],
+                mode=mode,
+                workspace=workspace_path,
+            )
+            activity.log("Task generated.")
+            key = _task_key(task)
+
+            # Detect same stuck task recurring
+            if key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
+                activity.log(
+                    f"Task has failed {same_task_streak} times — switching to diagnosis mode."
+                )
+                task = _make_diagnosis_task(task, same_task_streak)
+                key = "__diagnosis__"
+                mode = "audit"
+                in_diagnosis = True
+
+            print(f"\n{task}\n")
 
         set_current_task(state, task)
         activity.log("Saving state...")
@@ -152,7 +216,17 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         set_last_commit(state, after_commit)
 
+        # ── failure tracking ──────────────────────────────────────────────────
+
         if ok:
+            if in_diagnosis:
+                activity.log("Diagnosis task succeeded — resuming normal operation.")
+            same_task_streak = 0
+            last_failed_key = None
+            consecutive_failures = 0
+            in_diagnosis = False
+            diagnosis_failures = 0
+
             increment_tasks(state)
 
             if mode == "audit":
@@ -160,6 +234,64 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 n = extract_from_output(result.stdout, mode)
                 if n:
                     activity.log(f"Audit saved {n} finding(s).")
+
+        elif in_diagnosis:
+            diagnosis_failures += 1
+            activity.log(
+                f"Diagnosis failed ({diagnosis_failures}/{_DIAGNOSIS_GIVEUP}) — {reason}"
+            )
+
+            if diagnosis_failures >= _DIAGNOSIS_GIVEUP:
+                activity.log("Diagnosis exhausted — recording finding and moving on.")
+                add_finding(
+                    title="Repeated failure: progress blocked",
+                    description=(
+                        f"Task failed {same_task_streak} consecutive times. "
+                        f"Diagnosis also failed {diagnosis_failures} times.\n"
+                        f"Last failure: {reason}"
+                    ),
+                    severity="high",
+                )
+                same_task_streak = 0
+                last_failed_key = None
+                consecutive_failures = 0
+                in_diagnosis = False
+                diagnosis_failures = 0
+
+        else:
+            # Normal failure — track same-task streak and overall streak
+            consecutive_failures += 1
+
+            if key == last_failed_key:
+                same_task_streak += 1
+            else:
+                same_task_streak = 1
+                last_failed_key = key
+
+            activity.log(
+                f"Failure streak: {same_task_streak} same-task, "
+                f"{consecutive_failures} consecutive."
+            )
+
+            # Guard against many different tasks all failing
+            if consecutive_failures >= _CONSECUTIVE_THRESHOLD:
+                activity.log(
+                    f"Too many consecutive failures ({consecutive_failures}) — "
+                    "recording finding and resetting."
+                )
+                add_finding(
+                    title=f"Repeated failures: {consecutive_failures} consecutive",
+                    description=(
+                        f"Multiple consecutive failures across different tasks.\n"
+                        f"Last failure: {reason}"
+                    ),
+                    severity="high",
+                )
+                consecutive_failures = 0
+                same_task_streak = 0
+                last_failed_key = None
+
+        # ── state persistence ─────────────────────────────────────────────────
 
         activity.log("Saving state...")
         heartbeat(state)
