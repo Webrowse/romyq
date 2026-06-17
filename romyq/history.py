@@ -4,10 +4,7 @@ import tempfile
 from datetime import datetime, timezone
 
 
-HISTORY_FILE = "task_history.json"
-
-
-def _load(path: str = HISTORY_FILE) -> list:
+def _load(path: str) -> list:
     try:
         with open(path) as f:
             return json.load(f)
@@ -15,7 +12,7 @@ def _load(path: str = HISTORY_FILE) -> list:
         return []
 
 
-def _save(history: list, path: str = HISTORY_FILE) -> None:
+def _save(history: list, path: str) -> None:
     dir_ = os.path.dirname(os.path.abspath(path))
     with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(history, f, indent=2)
@@ -29,7 +26,7 @@ def add_entry(
     success: bool,
     commit: str,
     validation_reason: str,
-    path: str = HISTORY_FILE,
+    path: str,
 ) -> None:
     history = _load(path)
     history.append(
@@ -45,11 +42,11 @@ def add_entry(
     _save(history, path)
 
 
-def recent(limit: int = 20, path: str = HISTORY_FILE) -> list:
+def recent(limit: int = 20, path: str = "") -> list:
     return _load(path)[-limit:]
 
 
-def recent_text(limit: int = 20, path: str = HISTORY_FILE) -> str:
+def recent_text(limit: int = 20, path: str = "") -> str:
     tasks = recent(limit=limit, path=path)
 
     if not tasks:

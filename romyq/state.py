@@ -14,10 +14,8 @@ DEFAULT_STATE = {
     "audit_interval": 5,
 }
 
-STATE_FILE = "state.json"
 
-
-def load(path: str = STATE_FILE) -> dict:
+def load(path: str) -> dict:
     try:
         with open(path) as f:
             data = json.load(f)
@@ -33,12 +31,13 @@ def load(path: str = STATE_FILE) -> dict:
         return DEFAULT_STATE.copy()
 
     except json.JSONDecodeError:
+        print(f"[romyq] Warning: {path} was corrupted — resetting to defaults.", flush=True)
         backup = DEFAULT_STATE.copy()
         save(backup, path)
         return backup
 
 
-def save(data: dict, path: str = STATE_FILE) -> None:
+def save(data: dict, path: str) -> None:
     dir_ = os.path.dirname(os.path.abspath(path))
     with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(data, f, indent=2)

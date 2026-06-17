@@ -107,8 +107,13 @@ def cmd_note(args: argparse.Namespace) -> None:
         print(f"Error: workspace '{workspace_path}' not found. Run 'romyq init' or 'romyq attach' first.")
         sys.exit(1)
 
+    message = args.message.strip()
+    if not message:
+        print("Error: note message cannot be empty.")
+        sys.exit(1)
+
     path = store.notes_path(workspace_path)
-    notes_mod.append(path, args.message)
+    notes_mod.append(path, message)
 
     n = notes_mod.count(path)
     print(f"Note added ({n} total). Stored in {root}/.romyq/notes.md")
@@ -315,7 +320,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     git_bin = shutil.which("git")
     check("git", bool(git_bin), git_bin or "not found in PATH — install git")
 
-    check("mission.md", mission_exists(), "found" if mission_exists() else "missing — run 'romyq init' or 'romyq attach'")
+    mission_ok = mission_exists()
+    check("mission.md", mission_ok, "found" if mission_ok else "missing — run 'romyq init' or 'romyq attach'")
 
     workspace_path = _resolve_workspace(args)
     workspace_exists = Path(workspace_path).exists()

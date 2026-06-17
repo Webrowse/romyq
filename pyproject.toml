@@ -9,7 +9,7 @@ description = "Autonomous AI software project manager"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {email = "great.adarsh@gmail.com"},
+    {name = "Adarsh", email = "great.adarsh@gmail.com"},
 ]
 requires-python = ">=3.11"
 keywords = ["ai", "automation", "cli", "developer-tools", "llm"]

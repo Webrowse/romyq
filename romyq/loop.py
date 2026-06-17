@@ -104,6 +104,12 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(runner.DEFAULT_TIMEOUT)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
 
+    def _heartbeat(elapsed: int) -> None:
+        remaining = max(0, timeout_s - elapsed)
+        e_fmt = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
+        r_fmt = f"{remaining // 60}m{remaining % 60:02d}s" if remaining >= 60 else f"{remaining}s"
+        activity.log(f"Claude running ({e_fmt} elapsed, {r_fmt} remaining)")
+
     # Failure tracking (in-memory; resets on restart)
     same_task_streak: int = 0
     last_failed_key: str | None = None
@@ -199,12 +205,6 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         activity.log("Launching Claude...")
         t_start = time.monotonic()
-
-        def _heartbeat(elapsed: int) -> None:
-            remaining = max(0, timeout_s - elapsed)
-            e_fmt = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
-            r_fmt = f"{remaining // 60}m{remaining % 60:02d}s" if remaining >= 60 else f"{remaining}s"
-            activity.log(f"Claude running ({e_fmt} elapsed, {r_fmt} remaining)")
 
         result = runner.run_with_retry(
             workspace=workspace_path,

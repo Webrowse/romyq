@@ -1,11 +1,11 @@
 """
 Central authority for .romyq/ directory layout and legacy migration.
 
-All state for a managed workspace lives in {workspace}/.romyq/:
-  state.json    — runtime state (tasks completed, heartbeat, current task, …)
+All runtime state for a managed workspace lives in {workspace}/.romyq/:
+  state.json    — current run state (tasks completed, heartbeat, …)
   history.json  — per-task result log
   findings.json — audit findings
-  state.md      — human-readable last-task summary
+  state.md      — human-readable summary of the last task
   notes.md      — human steering notes (appended via `romyq note`)
 """
 import shutil

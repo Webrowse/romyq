@@ -40,16 +40,17 @@ def has_commits(path: str) -> bool:
     return bool(r.stdout.strip())
 
 
-def _ensure_gitignore_entry(path: str, entry: str) -> None:
-    """Add entry to {path}/.gitignore if not already present."""
+def _ensure_gitignore_entry(path: str, entry: str) -> bool:
+    """Add entry to {path}/.gitignore if not already present. Returns True if changed."""
     gitignore = Path(path) / ".gitignore"
     content = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     if entry in content.splitlines():
-        return
+        return False
     if content and not content.endswith("\n"):
         content += "\n"
     content += entry + "\n"
     gitignore.write_text(content, encoding="utf-8")
+    return True
 
 
 def bootstrap(path: str) -> None:
@@ -73,9 +74,15 @@ def bootstrap(path: str) -> None:
         )
         print(f"Created initial commit in {path}/")
     else:
-        # Existing repo: silently ensure .romyq/ is gitignored.
-        # The next Claude commit will pick up the .gitignore change naturally.
-        _ensure_gitignore_entry(path, ".romyq/")
+        # Existing repo: ensure .romyq/ is gitignored and commit the change
+        # immediately so the working tree stays clean for the first run.
+        if _ensure_gitignore_entry(path, ".romyq/"):
+            subprocess.run(["git", "add", ".gitignore"], cwd=path, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "chore: add .romyq/ to .gitignore"],
+                cwd=path,
+                capture_output=True,
+            )
 
 
 # ── git inspection ────────────────────────────────────────────────────────────
@@ -535,7 +542,3 @@ def profile(path: str) -> str:
         lines.append(f"Root Files: {', '.join(d['root_files'])}")
 
     return "\n".join(lines)
-
-
-def summary_text(path: str) -> str:
-    return profile(path)

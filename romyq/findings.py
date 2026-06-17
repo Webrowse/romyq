@@ -5,8 +5,6 @@ import tempfile
 from datetime import datetime, timezone
 
 
-FINDINGS_FILE = "audit_report.json"
-
 _SEVERITY_PATTERN = re.compile(r"\b(critical|high|medium|low)\b", re.IGNORECASE)
 
 _FINDING_PATTERN = re.compile(
@@ -31,7 +29,7 @@ _SEVERITY_KEYWORDS = {
 }
 
 
-def _load(path: str = FINDINGS_FILE) -> list:
+def _load(path: str) -> list:
     try:
         with open(path) as f:
             return json.load(f)
@@ -39,7 +37,7 @@ def _load(path: str = FINDINGS_FILE) -> list:
         return []
 
 
-def _save(findings: list, path: str = FINDINGS_FILE) -> None:
+def _save(findings: list, path: str) -> None:
     dir_ = os.path.dirname(os.path.abspath(path))
     with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(findings, f, indent=2)
@@ -60,7 +58,7 @@ def _detect_severity(text: str) -> str:
     return "medium"
 
 
-def add_finding(title: str, description: str, severity: str, path: str = FINDINGS_FILE) -> None:
+def add_finding(title: str, description: str, severity: str, path: str) -> None:
     findings = _load(path)
     findings.append(
         {
@@ -76,11 +74,11 @@ def add_finding(title: str, description: str, severity: str, path: str = FINDING
     _save(findings, path)
 
 
-def unresolved(path: str = FINDINGS_FILE) -> list:
+def unresolved(path: str) -> list:
     return [f for f in _load(path) if not f["resolved"]]
 
 
-def unresolved_text(path: str = FINDINGS_FILE) -> str:
+def unresolved_text(path: str) -> str:
     items = unresolved(path)
 
     if not items:
@@ -97,7 +95,7 @@ def unresolved_text(path: str = FINDINGS_FILE) -> str:
     return "\n\n---\n\n".join(lines)
 
 
-def extract_from_output(claude_output: str, mode: str, path: str = FINDINGS_FILE) -> int:
+def extract_from_output(claude_output: str, mode: str, path: str) -> int:
     if mode != "audit":
         return 0
 

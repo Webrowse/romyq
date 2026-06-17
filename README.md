@@ -55,8 +55,14 @@ Romyq will start generating and implementing tasks in the `workspace/` directory
 To use an existing repository instead:
 
 ```bash
-romyq run /path/to/existing/repo
+cd existing-project
+romyq attach        # sets up .romyq/ and creates mission.md
+romyq run .         # start the loop
 ```
+
+> **Safety:** Romyq will not restore (reset) the working tree if you have
+> uncommitted changes when a task starts. Commit or stash any in-progress
+> work before running for full safety guarantees.
 
 ## Commands
 
@@ -99,6 +105,21 @@ Example output:
   Tasks:            0 completed  (status: running)
   State dir:        ✓  /path/to/repo/.romyq/
 ```
+
+### `romyq note "message" [workspace]`
+
+Appends a steering note for the AI manager. Notes are injected into every
+task generation call as highest-priority guidance, so they take effect
+immediately on the next task without restarting.
+
+```bash
+romyq note "Focus on admin UX."
+romyq note "Ignore mobile support."
+romyq note "Prioritize scanner stability."
+```
+
+Notes accumulate in `{workspace}/.romyq/notes.md` and persist across runs.
+They do not overwrite `mission.md`. View current notes with `romyq info`.
 
 ### `romyq init [workspace]`
 
