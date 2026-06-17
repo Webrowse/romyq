@@ -4,7 +4,7 @@ import time
 from dotenv import load_dotenv
 
 from manager import generate_task
-from inspector import inspect_repository
+from workspace import inspect, bootstrap
 from validator import validate_task
 from task_history import add_entry
 from mission import load_mission
@@ -25,7 +25,6 @@ from claude_runner import (
     run_claude_with_retry,
 )
 
-from bootstrap import bootstrap_workspace
 from audit_extractor import extract_and_save_findings
 from completion_evaluator import evaluate_completion
 
@@ -107,7 +106,7 @@ def main() -> None:
 
     workspace = parse_args()
 
-    bootstrap_workspace(workspace)
+    bootstrap(workspace)
 
     while True:
         state = load_state(STATE_FILE)
@@ -118,7 +117,7 @@ def main() -> None:
 
         state_text = read_file(STATE_MD)
 
-        repo_before = inspect_repository(workspace)
+        repo_before = inspect(workspace)
 
         if state["tasks_completed"] > 0:
             completed, reason = evaluate_completion(
@@ -173,7 +172,7 @@ def main() -> None:
             task=task,
         )
 
-        repo_after = inspect_repository(workspace)
+        repo_after = inspect(workspace)
 
         after_commit = repo_after["latest_commit"]
 

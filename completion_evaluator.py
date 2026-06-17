@@ -1,7 +1,7 @@
 from openai import OpenAI
 
 from audit_report import unresolved_findings_text
-from repository_state import repository_summary_text
+from workspace import summary_text as repository_summary_text
 from task_history import recent_tasks_text
 
 

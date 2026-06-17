@@ -13,9 +13,7 @@ from audit_report import (
     unresolved_findings_text,
 )
 
-from repository_state import (
-    repository_summary_text,
-)
+from workspace import summary_text as repository_summary_text
 
 
 def generate_task(
@@ -41,11 +39,7 @@ def generate_task(
         unresolved_findings_text()
     )
 
-    repo_summary = (
-        repository_summary_text(
-            workspace
-        )
-    )
+    repo_summary = repository_summary_text(workspace)
 
     prompt = build_manager_prompt(
         mission=mission,
