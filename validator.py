@@ -30,6 +30,20 @@ def commit_changed(
     return before_commit != after_commit
 
 
+def restore_workspace(workspace: str) -> None:
+    subprocess.run(
+        ["git", "checkout", "."],
+        cwd=workspace,
+        capture_output=True,
+    )
+
+    subprocess.run(
+        ["git", "clean", "-fd"],
+        cwd=workspace,
+        capture_output=True,
+    )
+
+
 def validate_task(
     workspace: str,
     before_commit: str,
@@ -37,6 +51,7 @@ def validate_task(
     claude_returncode: int,
 ) -> tuple[bool, str]:
     if claude_returncode != 0:
+        restore_workspace(workspace)
         return (
             False,
             "Claude exited with non-zero status",
@@ -46,15 +61,17 @@ def validate_task(
         before_commit,
         after_commit,
     ):
+        restore_workspace(workspace)
         return (
             False,
             "No new commit created",
         )
 
     if has_uncommitted_changes(workspace):
+        restore_workspace(workspace)
         return (
             False,
-            "Repository left dirty",
+            "Repository left dirty — workspace restored",
         )
 
     return (
