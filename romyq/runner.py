@@ -1,3 +1,4 @@
+import re
 import subprocess
 import threading
 import time
@@ -40,6 +41,12 @@ If task cannot be completed, explain why.
 
 DEFAULT_TIMEOUT = 30 * 60  # 30 minutes
 
+# Matches standard ANSI CSI escape sequences (colours, cursor movement, etc.)
+_ANSI_RE = re.compile(r"\x1b\[[^a-zA-Z]*[a-zA-Z]")
+
+# Minimum seconds between streamed [Claude] lines — prevents terminal flood
+_STREAM_INTERVAL = 2.0
+
 
 class RateLimitError(Exception):
     pass
@@ -56,10 +63,36 @@ def _check_rate_limit(stdout: str, stderr: str) -> None:
             raise RateLimitError(phrase)
 
 
-def _drain(stream, buf: list) -> None:
+def _filter_stream(raw: str) -> str | None:
+    """Return a printable version of raw, or None if the line should be skipped.
+
+    Skips: blank lines, ANSI-only lines, lines > 150 chars (code / JSON dumps),
+    lines that start with JSON delimiters or code-fence markers, and
+    tab/4-space-indented code blocks.
+    """
+    clean = _ANSI_RE.sub("", raw).strip()
+
+    if not clean:
+        return None
+    if len(clean) > 150:
+        return None
+    if clean[0] in ("{", "[", "`"):
+        return None
+    if raw.startswith("\t") or raw.startswith("    "):
+        return None
+
+    # Truncate lines that are long-ish but passed the 150-char gate
+    if len(clean) > 100:
+        return clean[:97] + "..."
+    return clean
+
+
+def _drain(stream, buf: list, on_line=None) -> None:
     try:
         for line in iter(stream.readline, ""):
             buf.append(line)
+            if on_line:
+                on_line(line)
     finally:
         stream.close()
 
@@ -92,8 +125,25 @@ def run(
 
     stdout_buf: list[str] = []
     stderr_buf: list[str] = []
-    t_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True)
-    t_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True)
+
+    # Rate-limited stdout streaming — one [Claude] line every _STREAM_INTERVAL seconds
+    last_stream: list[float] = [0.0]
+
+    def _on_stdout_line(raw: str) -> None:
+        now = time.monotonic()
+        if now - last_stream[0] < _STREAM_INTERVAL:
+            return
+        display = _filter_stream(raw)
+        if display:
+            activity.log(f"[Claude] {display}")
+            last_stream[0] = now
+
+    t_out = threading.Thread(
+        target=_drain, args=(proc.stdout, stdout_buf, _on_stdout_line), daemon=True
+    )
+    t_err = threading.Thread(
+        target=_drain, args=(proc.stderr, stderr_buf), daemon=True
+    )
     t_out.start()
     t_err.start()
 
