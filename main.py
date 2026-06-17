@@ -25,6 +25,7 @@ from claude_runner import (
 )
 
 from bootstrap import bootstrap_workspace
+from audit_extractor import extract_and_save_findings
 
 
 load_dotenv()
@@ -176,6 +177,14 @@ def main() -> None:
 
             if mode == "audit":
                 mark_audit_complete(state)
+
+                n = extract_and_save_findings(
+                    claude_output=result.stdout,
+                    mode=mode,
+                )
+
+                if n:
+                    print(f"\nAUDIT: saved {n} finding(s)")
 
             print("\nVALIDATION PASSED")
 
