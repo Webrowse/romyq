@@ -101,7 +101,8 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     f_path = store.findings_path(workspace_path)
     md_path = store.state_md_path(workspace_path)
 
-    activity.log("Romyq started.")
+    timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(runner.DEFAULT_TIMEOUT)))
+    activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
 
     # Failure tracking (in-memory; resets on restart)
     same_task_streak: int = 0
@@ -191,13 +192,25 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         activity.log("Launching Claude...")
         t_start = time.monotonic()
+
+        def _heartbeat(elapsed: int) -> None:
+            remaining = max(0, timeout_s - elapsed)
+            e_fmt = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
+            r_fmt = f"{remaining // 60}m{remaining % 60:02d}s" if remaining >= 60 else f"{remaining}s"
+            activity.log(f"Claude running ({e_fmt} elapsed, {r_fmt} remaining)")
+
         result = runner.run_with_retry(
             workspace=workspace_path,
             task=task,
-            on_heartbeat=lambda s: activity.log(f"Claude running ({s}s)"),
+            on_heartbeat=_heartbeat,
+            timeout_seconds=timeout_s,
         )
         elapsed = int(time.monotonic() - t_start)
-        activity.log(f"Claude done ({elapsed}s).")
+        timed_out = result.returncode == 1 and "timed out" in result.stderr
+        if timed_out:
+            activity.log(f"Claude timed out ({elapsed}s).")
+        else:
+            activity.log(f"Claude done ({elapsed}s).")
 
         repo_after = ws.inspect(workspace_path)
         after_commit = repo_after["latest_commit"]
@@ -209,6 +222,10 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             after_commit=after_commit,
             returncode=result.returncode,
         )
+
+        # Preserve timeout as a distinct failure reason in history
+        if not ok and timed_out:
+            reason = f"Claude timed out after {elapsed}s ({timeout_s}s limit)"
 
         if ok:
             activity.log("Validation passed.")

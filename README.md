@@ -133,6 +133,7 @@ All checks passed. Ready to run: romyq run
 |---|---|---|
 | `DEEPSEEK_API_KEY` | — | Required. DeepSeek API key. |
 | `ROMYQ_WORKSPACE` | `workspace/` | Workspace directory path. |
+| `ROMYQ_CLAUDE_TIMEOUT` | `1800` | Claude subprocess timeout in seconds (default: 30 minutes). |
 
 Place these in a `.env` file in the directory where you run `romyq`.
 

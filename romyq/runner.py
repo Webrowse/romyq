@@ -38,8 +38,14 @@ Requirements:
 If task cannot be completed, explain why.
 """
 
+DEFAULT_TIMEOUT = 30 * 60  # 30 minutes
+
 
 class RateLimitError(Exception):
+    pass
+
+
+class ClaudeTimeoutError(Exception):
     pass
 
 
@@ -58,7 +64,22 @@ def _drain(stream, buf: list) -> None:
         stream.close()
 
 
-def run(workspace: str, task: str, on_heartbeat=None) -> subprocess.CompletedProcess:
+def _terminate(proc: subprocess.Popen) -> None:
+    """Send SIGTERM, escalate to SIGKILL if the process does not exit within 5s."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def run(
+    workspace: str,
+    task: str,
+    on_heartbeat=None,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> subprocess.CompletedProcess:
     prompt = _ENGINEER_PROMPT.format(task=task)
 
     proc = subprocess.Popen(
@@ -82,6 +103,16 @@ def run(workspace: str, task: str, on_heartbeat=None) -> subprocess.CompletedPro
     while proc.poll() is None:
         time.sleep(1)
         elapsed = int(time.monotonic() - start)
+
+        if elapsed >= timeout_seconds:
+            activity.log(
+                f"Claude timed out after {elapsed}s ({timeout_seconds}s limit) — terminating."
+            )
+            _terminate(proc)
+            t_out.join(timeout=3)
+            t_err.join(timeout=3)
+            raise ClaudeTimeoutError(f"exceeded {timeout_seconds}s")
+
         if elapsed >= next_beat:
             if on_heartbeat:
                 on_heartbeat(elapsed)
@@ -107,10 +138,23 @@ def run_with_retry(
     task: str,
     sleep_seconds: int = 1800,
     on_heartbeat=None,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
 ) -> subprocess.CompletedProcess:
     while True:
         try:
-            return run(workspace=workspace, task=task, on_heartbeat=on_heartbeat)
+            return run(
+                workspace=workspace,
+                task=task,
+                on_heartbeat=on_heartbeat,
+                timeout_seconds=timeout_seconds,
+            )
         except RateLimitError as e:
             activity.log(f"Claude rate limit ({e}) — sleeping {sleep_seconds}s")
             time.sleep(sleep_seconds)
+        except ClaudeTimeoutError as e:
+            return subprocess.CompletedProcess(
+                args=["claude"],
+                returncode=1,
+                stdout="",
+                stderr=f"Claude timed out: {e}",
+            )
