@@ -12,8 +12,10 @@ DEFAULT_STATE = {
     "audit_interval": 5,
 }
 
+STATE_FILE = "state.json"
 
-def load_state(path: str = "state.json") -> dict:
+
+def load(path: str = STATE_FILE) -> dict:
     try:
         with open(path) as f:
             data = json.load(f)
@@ -25,25 +27,23 @@ def load_state(path: str = "state.json") -> dict:
         return data
 
     except FileNotFoundError:
-        save_state(DEFAULT_STATE, path)
+        save(DEFAULT_STATE, path)
         return DEFAULT_STATE.copy()
 
     except json.JSONDecodeError:
         backup = DEFAULT_STATE.copy()
-        save_state(backup, path)
+        save(backup, path)
         return backup
 
 
-def save_state(data: dict, path: str = "state.json") -> None:
+def save(data: dict, path: str = STATE_FILE) -> None:
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
 def heartbeat(data: dict) -> None:
     data["heartbeat"] = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     )
 
 
@@ -63,19 +63,13 @@ def set_last_commit(data: dict, commit: str) -> None:
     data["last_commit"] = commit
 
 
-def audit_due(data: dict) -> bool:
-    return (
-        data["tasks_completed"]
-        - data["last_audit"]
-    ) >= data["audit_interval"]
-
-
 def mark_completed(data: dict) -> None:
     data["status"] = "completed"
 
 
-def next_mode(data: dict) -> str:
-    if audit_due(data):
-        return "audit"
+def audit_due(data: dict) -> bool:
+    return (data["tasks_completed"] - data["last_audit"]) >= data["audit_interval"]
 
-    return "implementation"
+
+def next_mode(data: dict) -> str:
+    return "audit" if audit_due(data) else "implementation"

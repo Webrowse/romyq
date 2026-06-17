@@ -1,0 +1,2 @@
+[console_scripts]
+romiq = romiq.cli:main
