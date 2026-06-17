@@ -75,8 +75,13 @@ romyq init /path/to/repo    # uses an existing directory
 Starts the autonomous development loop. Reads `mission.md` from the current
 directory. Workspace defaults to `workspace/` or `$ROMYQ_WORKSPACE`.
 
+By default Romyq runs indefinitely. When the mission is considered complete it
+logs the result and continues generating improvements (tests, docs, performance,
+reliability, UX). Pass `--until-complete` to stop instead.
+
 ```bash
-romyq run
+romyq run                        # continuous — runs until interrupted
+romyq run --until-complete       # stops when mission is complete
 romyq run /path/to/repo
 ROMYQ_WORKSPACE=/path/to/repo romyq run
 ```

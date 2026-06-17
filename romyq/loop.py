@@ -52,7 +52,7 @@ def _write_state_md(
         )
 
 
-def run(workspace_path: str) -> None:
+def run(workspace_path: str, until_complete: bool = False) -> None:
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise SystemExit("DEEPSEEK_API_KEY is not set. Add it to .env or your environment.")
@@ -72,7 +72,10 @@ def run(workspace_path: str) -> None:
         task_num = state["tasks_completed"] + 1
         activity.log(f"Task {task_num}  mode={mode}")
 
-        if state["tasks_completed"] > 0:
+        already_complete = state["status"] == "completed"
+        run_check = state["tasks_completed"] > 0 and (until_complete or not already_complete)
+
+        if run_check:
             activity.log("Checking mission completion...")
             completed, reason = manager.evaluate_completion(
                 api_key=api_key,
@@ -86,7 +89,9 @@ def run(workspace_path: str) -> None:
                 mark_completed(state)
                 heartbeat(state)
                 save_state(state, STATE_FILE)
-                break
+                if until_complete:
+                    break
+                activity.log("Continuous mode — proceeding with improvements.")
             else:
                 activity.log(f"Continuing — {reason}")
 

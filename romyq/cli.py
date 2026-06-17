@@ -39,7 +39,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     from .loop import run
-    run(workspace_path)
+    run(workspace_path, until_complete=args.until_complete)
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -146,6 +146,12 @@ def main() -> None:
         nargs="?",
         default=None,
         help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+    )
+    p_run.add_argument(
+        "--until-complete",
+        action="store_true",
+        default=False,
+        help="Stop when the mission is complete (default: run indefinitely)",
     )
     p_run.set_defaults(func=cmd_run)
 
