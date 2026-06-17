@@ -2,7 +2,7 @@ from openai import OpenAI
 
 from .history import recent_text
 from .findings import unresolved_text
-from .workspace import summary_text
+from .workspace import profile
 
 
 # ── prompts ───────────────────────────────────────────────────────────────────
@@ -138,16 +138,18 @@ Git Status:
 
 {git_status}
 
-Repository Summary:
+Repository Profile:
 
-{summary_text(workspace)}
+{profile(workspace)}
 
 Planning Rules:
 - Use repository structure when planning.
-- Prefer modifying existing code.
+- Use the detected language, frameworks, and build commands.
+- Prefer modifying existing code over creating new files.
 - Avoid creating duplicate systems.
 - Respect unresolved audit findings.
 - Continue the current architecture.
+- Use the detected test suite when adding or running tests.
 - Build toward mission completion.
 
 Generate exactly ONE next task.
@@ -198,9 +200,9 @@ def evaluate_completion(
 
 {mission}
 
-Repository Summary:
+Repository Profile:
 
-{summary_text(workspace)}
+{profile(workspace)}
 
 Recent Git Log:
 
