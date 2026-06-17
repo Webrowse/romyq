@@ -105,13 +105,16 @@ def generate_task(
     git_status: str,
     mode: str,
     workspace: str,
+    notes: str = "",
 ) -> str:
     guidance = _AUDIT_GUIDANCE if mode == "audit" else _IMPL_GUIDANCE
+
+    notes_section = f"\nSteering Notes (highest priority — follow these before anything else):\n\n{notes.strip()}\n" if notes.strip() else ""
 
     prompt = f"""Mission:
 
 {mission}
-
+{notes_section}
 Current State:
 
 {state}

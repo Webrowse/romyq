@@ -6,6 +6,7 @@ All state for a managed workspace lives in {workspace}/.romyq/:
   history.json  — per-task result log
   findings.json — audit findings
   state.md      — human-readable last-task summary
+  notes.md      — human steering notes (appended via `romyq note`)
 """
 import shutil
 from pathlib import Path
@@ -16,6 +17,7 @@ _STATE_FILE = "state.json"
 _HISTORY_FILE = "history.json"
 _FINDINGS_FILE = "findings.json"
 _STATE_MD = "state.md"
+_NOTES_FILE = "notes.md"
 
 # Legacy CWD-relative names → new names inside .romyq/
 _LEGACY = {
@@ -50,6 +52,10 @@ def findings_path(workspace: str) -> str:
 
 def state_md_path(workspace: str) -> str:
     return str(ensure_dir(workspace) / _STATE_MD)
+
+
+def notes_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _NOTES_FILE)
 
 
 def migrate(workspace: str) -> list[str]:

@@ -2,7 +2,7 @@ import hashlib
 import os
 import time
 
-from . import activity, manager, runner, store, workspace as ws
+from . import activity, manager, notes, runner, store, workspace as ws
 from .findings import add_finding, extract_from_output
 from .history import add_entry
 from .mission import load
@@ -168,6 +168,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 git_status=repo_before["git_status"],
                 mode=mode,
                 workspace=workspace_path,
+                notes=notes.load(store.notes_path(workspace_path)),
             )
             activity.log("Task generated.")
             key = _task_key(task)

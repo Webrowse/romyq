@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, store
+from . import __version__, notes as notes_mod, store
 from .mission import create_template, exists as mission_exists
 from .workspace import bootstrap, is_git_repo, _ensure_gitignore_entry, detect
 from .state import load as load_state
@@ -97,6 +97,23 @@ def cmd_attach(args: argparse.Namespace) -> None:
     print(f"  3. romyq run {workspace_path}")
 
 
+# ── note ──────────────────────────────────────────────────────────────────────
+
+def cmd_note(args: argparse.Namespace) -> None:
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Error: workspace '{workspace_path}' not found. Run 'romyq init' or 'romyq attach' first.")
+        sys.exit(1)
+
+    path = store.notes_path(workspace_path)
+    notes_mod.append(path, args.message)
+
+    n = notes_mod.count(path)
+    print(f"Note added ({n} total). Stored in {root}/.romyq/notes.md")
+
+
 # ── info ──────────────────────────────────────────────────────────────────────
 
 def cmd_info(args: argparse.Namespace) -> None:
@@ -175,6 +192,18 @@ def cmd_info(args: argparse.Namespace) -> None:
         except Exception:
             row("Tasks:", "0 completed")
         row("State dir:", f"✓  {root}/.romyq/")
+
+        n_notes = notes_mod.count(store.notes_path(str(root)))
+        if n_notes:
+            note_lines = [
+                l for l in notes_mod.load(store.notes_path(str(root))).splitlines()
+                if l.strip().startswith("-")
+            ]
+            row("Notes:", f"{n_notes} note(s)")
+            for line in note_lines[-3:]:
+                row("", line.strip())
+        else:
+            row("Notes:", "none  (add with 'romyq note \"message\"')")
     else:
         row("Tasks:", "no history  (run 'romyq attach' first)")
         row("State dir:", f"✗  not attached")
@@ -340,6 +369,16 @@ def main() -> None:
         help="Path to the existing repository (default: current directory)",
     )
     p_attach.set_defaults(func=cmd_attach)
+
+    p_note = sub.add_parser("note", help="Add a steering note for the AI manager")
+    p_note.add_argument("message", help="The note to add (e.g. 'Focus on admin UX.')")
+    p_note.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+    )
+    p_note.set_defaults(func=cmd_note)
 
     p_info = sub.add_parser("info", help="Show what Romyq detects about a repository")
     p_info.add_argument(
