@@ -23,6 +23,8 @@ from claude_runner import (
     run_claude_with_retry,
 )
 
+from bootstrap import bootstrap_workspace
+
 
 load_dotenv()
 
@@ -96,6 +98,8 @@ def main() -> None:
         raise RuntimeError(
             "DEEPSEEK_API_KEY missing"
         )
+
+    bootstrap_workspace(WORKSPACE)
 
     while True:
         state = load_state(
