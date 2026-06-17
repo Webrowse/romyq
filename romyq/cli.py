@@ -4,11 +4,15 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, store
 from .mission import create_template, exists as mission_exists
 from .workspace import bootstrap, is_git_repo
-from .state import load as load_state, STATE_FILE
-from .history import recent, HISTORY_FILE
+from .state import load as load_state
+from .history import recent
+
+
+def _resolve_workspace(args: argparse.Namespace) -> str:
+    return getattr(args, "workspace", None) or os.getenv("ROMYQ_WORKSPACE", "workspace")
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -22,6 +26,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     bootstrap(workspace_path)
     print(f"\nWorkspace ready at: {workspace_path}/")
+    print(f"State directory:    {workspace_path}/.romyq/")
     print("\nNext steps:")
     print("  1. Edit mission.md")
     print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
@@ -32,7 +37,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    workspace_path = args.workspace or os.getenv("ROMYQ_WORKSPACE", "workspace")
+    workspace_path = _resolve_workspace(args)
 
     if not mission_exists():
         print("Error: mission.md not found. Run 'romyq init' first.")
@@ -43,12 +48,22 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
+    workspace_path = _resolve_workspace(args)
+
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    # Run migration silently so legacy installs work immediately
+    store.migrate(workspace_path)
+
     try:
-        state = load_state(STATE_FILE)
+        state = load_state(store.state_path(workspace_path))
     except Exception:
         print("No state found. Has romyq been run yet?")
         sys.exit(1)
 
+    print(f"Workspace:       {Path(workspace_path).resolve()}")
     print(f"Status:          {state['status']}")
     print(f"Tasks completed: {state['tasks_completed']}")
     print(f"Last commit:     {state['last_commit'] or '(none)'}")
@@ -61,7 +76,15 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_logs(args: argparse.Namespace) -> None:
-    entries = recent(limit=args.last, path=HISTORY_FILE)
+    workspace_path = _resolve_workspace(args)
+
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    entries = recent(limit=args.last, path=store.history_path(workspace_path))
 
     if not entries:
         print("No task history yet.")
@@ -105,13 +128,20 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     check("mission.md", mission_exists(), "found" if mission_exists() else "missing — run 'romyq init'")
 
-    workspace_path = args.workspace or os.getenv("ROMYQ_WORKSPACE", "workspace")
+    workspace_path = _resolve_workspace(args)
     workspace_exists = Path(workspace_path).exists()
     check(f"workspace ({workspace_path}/)", workspace_exists, "exists" if workspace_exists else "missing — run 'romyq init'")
 
     if workspace_exists:
         git_ok = is_git_repo(workspace_path)
         check("workspace is a git repo", git_ok, "yes" if git_ok else "run 'romyq init'")
+
+        romyq_dir = store.romyq_dir(workspace_path)
+        check(
+            f"state dir ({workspace_path}/.romyq/)",
+            romyq_dir.exists(),
+            "exists" if romyq_dir.exists() else "created on first run",
+        )
 
     print()
     if ok:
@@ -156,10 +186,25 @@ def main() -> None:
     p_run.set_defaults(func=cmd_run)
 
     p_status = sub.add_parser("status", help="Show current run status")
+    p_status.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+    )
     p_status.set_defaults(func=cmd_status)
 
     p_logs = sub.add_parser("logs", help="Show recent task history")
-    p_logs.add_argument("--last", type=int, default=10, metavar="N", help="Number of entries to show (default: 10)")
+    p_logs.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+    )
+    p_logs.add_argument(
+        "--last", type=int, default=10, metavar="N",
+        help="Number of entries to show (default: 10)",
+    )
     p_logs.set_defaults(func=cmd_logs)
 
     p_doctor = sub.add_parser("doctor", help="Check environment and configuration")

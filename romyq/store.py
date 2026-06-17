@@ -1,0 +1,70 @@
+"""
+Central authority for .romyq/ directory layout and legacy migration.
+
+All state for a managed workspace lives in {workspace}/.romyq/:
+  state.json    — runtime state (tasks completed, heartbeat, current task, …)
+  history.json  — per-task result log
+  findings.json — audit findings
+  state.md      — human-readable last-task summary
+"""
+import shutil
+from pathlib import Path
+
+ROMYQ_DIR = ".romyq"
+
+_STATE_FILE = "state.json"
+_HISTORY_FILE = "history.json"
+_FINDINGS_FILE = "findings.json"
+_STATE_MD = "state.md"
+
+# Legacy CWD-relative names → new names inside .romyq/
+_LEGACY = {
+    "state.json": _STATE_FILE,
+    "task_history.json": _HISTORY_FILE,
+    "audit_report.json": _FINDINGS_FILE,
+    "state.md": _STATE_MD,
+}
+
+
+def romyq_dir(workspace: str) -> Path:
+    return Path(workspace).resolve() / ROMYQ_DIR
+
+
+def ensure_dir(workspace: str) -> Path:
+    d = romyq_dir(workspace)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def state_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _STATE_FILE)
+
+
+def history_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _HISTORY_FILE)
+
+
+def findings_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _FINDINGS_FILE)
+
+
+def state_md_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _STATE_MD)
+
+
+def migrate(workspace: str) -> list[str]:
+    """Move any legacy CWD-based state files into {workspace}/.romyq/.
+
+    Safe to call repeatedly — only moves files that exist in CWD and are
+    absent from the target location.  Returns list of moved file descriptions.
+    """
+    d = ensure_dir(workspace)
+    cwd = Path(".")
+    moved: list[str] = []
+    for legacy_name, new_name in _LEGACY.items():
+        src = cwd / legacy_name
+        dst = d / new_name
+        if src.exists() and not dst.exists():
+            shutil.move(str(src), str(dst))
+            moved.append(f"{legacy_name} → .romyq/{new_name}")
+    return moved

@@ -2,7 +2,7 @@ import hashlib
 import os
 import time
 
-from . import activity, manager, runner, workspace as ws
+from . import activity, manager, runner, store, workspace as ws
 from .findings import add_finding, extract_from_output
 from .history import add_entry
 from .mission import load
@@ -19,9 +19,6 @@ from .state import (
 )
 from .validator import validate
 
-
-STATE_FILE = "state.json"
-STATE_MD = "state.md"
 
 # Failure thresholds
 _SAME_TASK_THRESHOLD = 3    # same task key fails this many times → diagnosis
@@ -65,6 +62,7 @@ def _read(path: str) -> str:
 
 
 def _write_state_md(
+    path: str,
     task: str,
     stdout: str,
     stderr: str,
@@ -72,7 +70,7 @@ def _write_state_md(
     ok: bool,
     reason: str,
 ) -> None:
-    with open(STATE_MD, "w") as f:
+    with open(path, "w") as f:
         f.write(
             f"# Current State\n\n"
             f"## Last Task\n\n{task}\n\n"
@@ -91,21 +89,33 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         raise SystemExit("DEEPSEEK_API_KEY is not set. Add it to .env or your environment.")
 
     ws.bootstrap(workspace_path)
+
+    # Migrate any legacy CWD-based state files on first run
+    moved = store.migrate(workspace_path)
+    for desc in moved:
+        activity.log(f"Migrated: {desc}")
+
+    # Derive workspace-scoped paths
+    s_path = store.state_path(workspace_path)
+    h_path = store.history_path(workspace_path)
+    f_path = store.findings_path(workspace_path)
+    md_path = store.state_md_path(workspace_path)
+
     activity.log("Romyq started.")
 
     # Failure tracking (in-memory; resets on restart)
-    same_task_streak: int = 0          # consecutive failures on the same task hash
-    last_failed_key: str | None = None # hash of the last failed task
-    consecutive_failures: int = 0      # any consecutive failure (different tasks)
-    in_diagnosis: bool = False         # currently running a diagnosis task
-    diagnosis_failures: int = 0        # consecutive diagnosis task failures
+    same_task_streak: int = 0
+    last_failed_key: str | None = None
+    consecutive_failures: int = 0
+    in_diagnosis: bool = False
+    diagnosis_failures: int = 0
 
     while True:
-        state = load_state(STATE_FILE)
+        state = load_state(s_path)
         heartbeat(state)
 
         mission = load()
-        state_text = _read(STATE_MD)
+        state_text = _read(md_path)
         repo_before = ws.inspect(workspace_path)
 
         mode = next_mode(state)
@@ -127,7 +137,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 activity.log(f"Mission complete — {reason}")
                 mark_completed(state)
                 heartbeat(state)
-                save_state(state, STATE_FILE)
+                save_state(state, s_path)
                 if until_complete:
                     break
                 activity.log("Continuous mode — proceeding with improvements.")
@@ -161,7 +171,6 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             activity.log("Task generated.")
             key = _task_key(task)
 
-            # Detect same stuck task recurring
             if key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
                 activity.log(
                     f"Task has failed {same_task_streak} times — switching to diagnosis mode."
@@ -175,7 +184,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         set_current_task(state, task)
         activity.log("Saving state...")
-        save_state(state, STATE_FILE)
+        save_state(state, s_path)
         activity.log("State saved.")
 
         before_commit = repo_before["latest_commit"]
@@ -212,6 +221,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             success=ok,
             commit=after_commit,
             validation_reason=reason,
+            path=h_path,
         )
 
         set_last_commit(state, after_commit)
@@ -231,7 +241,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
             if mode == "audit":
                 mark_audit_complete(state)
-                n = extract_from_output(result.stdout, mode)
+                n = extract_from_output(result.stdout, mode, path=f_path)
                 if n:
                     activity.log(f"Audit saved {n} finding(s).")
 
@@ -251,6 +261,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                         f"Last failure: {reason}"
                     ),
                     severity="high",
+                    path=f_path,
                 )
                 same_task_streak = 0
                 last_failed_key = None
@@ -259,7 +270,6 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 diagnosis_failures = 0
 
         else:
-            # Normal failure — track same-task streak and overall streak
             consecutive_failures += 1
 
             if key == last_failed_key:
@@ -273,7 +283,6 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 f"{consecutive_failures} consecutive."
             )
 
-            # Guard against many different tasks all failing
             if consecutive_failures >= _CONSECUTIVE_THRESHOLD:
                 activity.log(
                     f"Too many consecutive failures ({consecutive_failures}) — "
@@ -286,6 +295,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                         f"Last failure: {reason}"
                     ),
                     severity="high",
+                    path=f_path,
                 )
                 consecutive_failures = 0
                 same_task_streak = 0
@@ -295,8 +305,8 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         activity.log("Saving state...")
         heartbeat(state)
-        save_state(state, STATE_FILE)
-        _write_state_md(task, result.stdout, result.stderr, repo_after, ok, reason)
+        save_state(state, s_path)
+        _write_state_md(md_path, task, result.stdout, result.stderr, repo_after, ok, reason)
         activity.log(f"State saved. Tasks completed: {state['tasks_completed']}")
 
         activity.log("Waiting 10s before next task...")

@@ -138,15 +138,34 @@ Place these in a `.env` file in the directory where you run `romyq`.
 
 ## State files
 
-Romyq writes the following files to the current directory:
+Romyq writes `mission.md` to the current directory and stores all runtime
+state inside the managed repository under `.romyq/`:
 
-| File | Purpose |
+| Location | Purpose |
 |---|---|
-| `mission.md` | Your mission (you write this) |
-| `state.json` | Current run state |
-| `state.md` | Human-readable summary of the last task |
-| `task_history.json` | Full task history |
-| `audit_report.json` | Audit findings (created during audit cycles) |
+| `mission.md` | Your mission — you write this, lives where you run romyq |
+| `<workspace>/.romyq/state.json` | Current run state |
+| `<workspace>/.romyq/state.md` | Human-readable summary of the last task |
+| `<workspace>/.romyq/history.json` | Full task history |
+| `<workspace>/.romyq/findings.json` | Audit findings |
+
+`.romyq/` is automatically added to the workspace's `.gitignore` so it does
+not pollute the repository's commit history.
+
+Each managed repository has its own independent `.romyq/` directory, so
+multiple repositories can be managed simultaneously with separate state.
+
+### Working with state from any directory
+
+`romyq status` and `romyq logs` accept a workspace argument (or read
+`$ROMYQ_WORKSPACE`) so you can inspect state without being in the romyq
+launch directory:
+
+```bash
+romyq status /path/to/repo
+romyq logs /path/to/repo --last 20
+ROMYQ_WORKSPACE=/path/to/repo romyq status
+```
 
 ## License
 

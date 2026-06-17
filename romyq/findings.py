@@ -97,7 +97,7 @@ def unresolved_text(path: str = FINDINGS_FILE) -> str:
     return "\n\n---\n\n".join(lines)
 
 
-def extract_from_output(claude_output: str, mode: str) -> int:
+def extract_from_output(claude_output: str, mode: str, path: str = FINDINGS_FILE) -> int:
     if mode != "audit":
         return 0
 
@@ -108,7 +108,7 @@ def extract_from_output(claude_output: str, mode: str) -> int:
             continue
 
         title = text.splitlines()[0][:120].strip()
-        add_finding(title=title, description=text, severity=_detect_severity(text))
+        add_finding(title=title, description=text, severity=_detect_severity(text), path=path)
         saved += 1
 
     return saved

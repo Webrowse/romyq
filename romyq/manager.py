@@ -1,5 +1,6 @@
 from openai import OpenAI
 
+from . import store
 from .history import recent_text
 from .findings import unresolved_text
 from .workspace import profile
@@ -124,11 +125,11 @@ Mode Guidance:
 
 Recent Task History:
 
-{recent_text(limit=20)}
+{recent_text(limit=20, path=store.history_path(workspace))}
 
 Unresolved Audit Findings:
 
-{unresolved_text()}
+{unresolved_text(path=store.findings_path(workspace))}
 
 Git History:
 
@@ -210,11 +211,11 @@ Recent Git Log:
 
 Recent Task History:
 
-{recent_text(limit=20)}
+{recent_text(limit=20, path=store.history_path(workspace))}
 
 Unresolved Audit Findings:
 
-{unresolved_text()}
+{unresolved_text(path=store.findings_path(workspace))}
 
 Has the mission been completed?
 """
