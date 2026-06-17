@@ -190,6 +190,12 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         activity.log("State saved.")
 
         before_commit = repo_before["latest_commit"]
+        pre_dirty = bool(repo_before["git_status"].strip())
+        if pre_dirty:
+            activity.log(
+                "Warning: working tree has uncommitted changes. "
+                "Restore will be skipped on failure — commit or stash first for full safety."
+            )
 
         activity.log("Launching Claude...")
         t_start = time.monotonic()
@@ -222,6 +228,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             before_commit=before_commit,
             after_commit=after_commit,
             returncode=result.returncode,
+            pre_dirty=pre_dirty,
         )
 
         # Preserve timeout as a distinct failure reason in history
