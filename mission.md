@@ -1,10 +1,5 @@
-Build a Rust terminal talking clock.
+Build a personal finance tracker web app.
 
-Features:
-1. Show time
-2. Speak time
-3. Add alarm support
-4. Add reminder support
+Users should be able to log income and expenses, categorize transactions, and see a dashboard with spending summaries and charts.
 
-Work in small tasks.
-Commit after each completed task.
+Keep it simple and functional. Use whatever stack makes sense.
