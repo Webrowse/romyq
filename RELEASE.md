@@ -1,5 +1,44 @@
 # Release process
 
+## Automated release (recommended)
+
+Pushing a version tag triggers `.github/workflows/release.yml`, which:
+
+1. Builds standalone binaries with PyInstaller on 4 platforms (Linux x86_64, macOS Intel, macOS ARM64, Windows x86_64)
+2. Creates a GitHub Release with all binaries, the wheel, and the sdist attached
+3. Publishes to PyPI via trusted publishing (OIDC — no token needed if configured)
+
+### One-time PyPI trusted publisher setup
+
+Before the first automated release, configure a trusted publisher on PyPI:
+
+1. Go to `https://pypi.org/manage/project/romyq/settings/publishing/`
+2. Add a trusted publisher:
+   - Owner: `adarsh`
+   - Repository: `romyq`
+   - Workflow: `release.yml`
+   - Environment: `pypi`
+
+### Release steps
+
+```bash
+# 1. Bump version in pyproject.toml
+# 2. Commit
+git add pyproject.toml
+git commit -m "chore: bump version to 0.2.0"
+
+# 3. Tag and push — this triggers the workflow
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+The workflow runs automatically. Monitor it at:
+`https://github.com/adarsh/romyq/actions`
+
+---
+
+## Manual release
+
 ## Prerequisites
 
 ```bash
@@ -137,5 +176,7 @@ TWINE_USERNAME=__token__ TWINE_PASSWORD=pypi-... twine upload dist/*
 - [ ] `python -m build` succeeds
 - [ ] Local wheel installs and `romyq --version` is correct
 - [ ] (Optional) TestPyPI upload verified
-- [ ] `twine upload dist/*` completed without errors
+- [ ] `twine upload dist/*` completed without errors (manual) or trusted publisher configured (automated)
 - [ ] `git tag v<version>` pushed
+- [ ] GitHub Actions workflow completed successfully
+- [ ] GitHub Release assets verified (4 binaries + wheel + sdist)

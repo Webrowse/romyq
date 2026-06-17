@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build (${{ matrix.asset_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: romyq
+            asset_name: romyq-linux-x86_64
+          - os: macos-13
+            artifact_name: romyq
+            asset_name: romyq-macos-x86_64
+          - os: macos-latest
+            artifact_name: romyq
+            asset_name: romyq-macos-arm64
+          - os: windows-latest
+            artifact_name: romyq.exe
+            asset_name: romyq-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and PyInstaller
+        run: pip install . pyinstaller
+
+      - name: Build binary
+        run: pyinstaller --onefile --name romyq romyq/__main__.py
+
+      - name: Stage asset
+        shell: bash
+        run: |
+          mkdir staging
+          cp dist/${{ matrix.artifact_name }} staging/${{ matrix.asset_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: staging/${{ matrix.asset_name }}
+
+  release:
+    name: GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Python packages
+        run: |
+          pip install build
+          python -m build
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
