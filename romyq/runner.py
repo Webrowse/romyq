@@ -1,5 +1,8 @@
 import subprocess
+import threading
 import time
+
+from . import activity
 
 
 _LIMIT_STRINGS = [
@@ -47,24 +50,67 @@ def _check_rate_limit(stdout: str, stderr: str) -> None:
             raise RateLimitError(phrase)
 
 
-def run(workspace: str, task: str) -> subprocess.CompletedProcess:
+def _drain(stream, buf: list) -> None:
+    try:
+        for line in iter(stream.readline, ""):
+            buf.append(line)
+    finally:
+        stream.close()
+
+
+def run(workspace: str, task: str, on_heartbeat=None) -> subprocess.CompletedProcess:
     prompt = _ENGINEER_PROMPT.format(task=task)
 
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["claude", "-p", "--dangerously-skip-permissions", prompt],
         cwd=workspace,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
 
-    _check_rate_limit(result.stdout, result.stderr)
-    return result
+    stdout_buf: list[str] = []
+    stderr_buf: list[str] = []
+    t_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True)
+    t_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    start = time.monotonic()
+    next_beat = 10
+
+    while proc.poll() is None:
+        time.sleep(1)
+        elapsed = int(time.monotonic() - start)
+        if elapsed >= next_beat:
+            if on_heartbeat:
+                on_heartbeat(elapsed)
+            next_beat += 10
+
+    t_out.join()
+    t_err.join()
+
+    stdout = "".join(stdout_buf)
+    stderr = "".join(stderr_buf)
+
+    _check_rate_limit(stdout, stderr)
+    return subprocess.CompletedProcess(
+        args=proc.args,
+        returncode=proc.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
 
-def run_with_retry(workspace: str, task: str, sleep_seconds: int = 1800) -> subprocess.CompletedProcess:
+def run_with_retry(
+    workspace: str,
+    task: str,
+    sleep_seconds: int = 1800,
+    on_heartbeat=None,
+) -> subprocess.CompletedProcess:
     while True:
         try:
-            return run(workspace=workspace, task=task)
+            return run(workspace=workspace, task=task, on_heartbeat=on_heartbeat)
         except RateLimitError as e:
-            print(f"\nClaude rate limit reached ({e}). Sleeping {sleep_seconds}s...")
+            activity.log(f"Claude rate limit ({e}) — sleeping {sleep_seconds}s")
             time.sleep(sleep_seconds)

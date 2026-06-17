@@ -1,7 +1,7 @@
 import os
 import time
 
-from . import manager, runner, workspace as ws
+from . import activity, manager, runner, workspace as ws
 from .findings import extract_from_output
 from .history import add_entry
 from .mission import load
@@ -58,6 +58,7 @@ def run(workspace_path: str) -> None:
         raise SystemExit("DEEPSEEK_API_KEY is not set. Add it to .env or your environment.")
 
     ws.bootstrap(workspace_path)
+    activity.log("Romyq started.")
 
     while True:
         state = load_state(STATE_FILE)
@@ -67,7 +68,12 @@ def run(workspace_path: str) -> None:
         state_text = _read(STATE_MD)
         repo_before = ws.inspect(workspace_path)
 
+        mode = next_mode(state)
+        task_num = state["tasks_completed"] + 1
+        activity.log(f"Task {task_num}  mode={mode}")
+
         if state["tasks_completed"] > 0:
+            activity.log("Checking mission completion...")
             completed, reason = manager.evaluate_completion(
                 api_key=api_key,
                 mission=mission,
@@ -75,20 +81,16 @@ def run(workspace_path: str) -> None:
                 git_log=repo_before["git_log"],
             )
 
-            print("\n" + "=" * 72)
-            print(f"COMPLETION CHECK  completed={completed}")
-            print(f"  {reason}")
-            print("=" * 72)
-
             if completed:
+                activity.log(f"Mission complete — {reason}")
                 mark_completed(state)
                 heartbeat(state)
                 save_state(state, STATE_FILE)
-                print("\nMISSION COMPLETE —", reason)
                 break
+            else:
+                activity.log(f"Continuing — {reason}")
 
-        mode = next_mode(state)
-
+        activity.log("Asking DeepSeek...")
         task = manager.generate_task(
             api_key=api_key,
             mission=mission,
@@ -99,29 +101,41 @@ def run(workspace_path: str) -> None:
             mode=mode,
             workspace=workspace_path,
         )
-
-        print("\n" + "=" * 72)
-        print(f"MODE: {mode}")
-        print("=" * 72)
-        print(task)
-        print("=" * 72)
+        activity.log("Task generated.")
+        print(f"\n{task}\n")
 
         set_current_task(state, task)
+        activity.log("Saving state...")
         save_state(state, STATE_FILE)
+        activity.log("State saved.")
 
         before_commit = repo_before["latest_commit"]
 
-        result = runner.run_with_retry(workspace=workspace_path, task=task)
+        activity.log("Launching Claude...")
+        t_start = time.monotonic()
+        result = runner.run_with_retry(
+            workspace=workspace_path,
+            task=task,
+            on_heartbeat=lambda s: activity.log(f"Claude running ({s}s)"),
+        )
+        elapsed = int(time.monotonic() - t_start)
+        activity.log(f"Claude done ({elapsed}s).")
 
         repo_after = ws.inspect(workspace_path)
         after_commit = repo_after["latest_commit"]
 
+        activity.log("Validating...")
         ok, reason = validate(
             workspace=workspace_path,
             before_commit=before_commit,
             after_commit=after_commit,
             returncode=result.returncode,
         )
+
+        if ok:
+            activity.log("Validation passed.")
+        else:
+            activity.log(f"Validation failed — {reason}")
 
         add_entry(
             task=task,
@@ -140,16 +154,13 @@ def run(workspace_path: str) -> None:
                 mark_audit_complete(state)
                 n = extract_from_output(result.stdout, mode)
                 if n:
-                    print(f"\nAUDIT: saved {n} finding(s)")
+                    activity.log(f"Audit saved {n} finding(s).")
 
-            print("\nVALIDATION PASSED")
-        else:
-            print(f"\nVALIDATION FAILED: {reason}")
-
+        activity.log("Saving state...")
         heartbeat(state)
         save_state(state, STATE_FILE)
         _write_state_md(task, result.stdout, result.stderr, repo_after, ok, reason)
+        activity.log(f"State saved. Tasks completed: {state['tasks_completed']}")
 
-        print(f"\nTOTAL TASKS: {state['tasks_completed']}")
-
+        activity.log("Waiting 10s before next task...")
         time.sleep(10)
