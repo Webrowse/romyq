@@ -45,7 +45,7 @@ def bootstrap(path: str) -> None:
     if not has_commits(path):
         gitignore = Path(path) / ".gitignore"
         if not gitignore.exists():
-            gitignore.write_text("# Romiq workspace\n")
+            gitignore.write_text("# Romyq workspace\n")
 
         subprocess.run(["git", "add", ".gitignore"], cwd=path, capture_output=True)
         subprocess.run(

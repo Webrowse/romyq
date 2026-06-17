@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 
 
@@ -14,8 +16,11 @@ def _load(path: str = HISTORY_FILE) -> list:
 
 
 def _save(history: list, path: str = HISTORY_FILE) -> None:
-    with open(path, "w") as f:
+    dir_ = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(history, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, path)
 
 
 def add_entry(

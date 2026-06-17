@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 
 
@@ -37,8 +39,11 @@ def load(path: str = STATE_FILE) -> dict:
 
 
 def save(data: dict, path: str = STATE_FILE) -> None:
-    with open(path, "w") as f:
+    dir_ = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(data, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, path)
 
 
 def heartbeat(data: dict) -> None:

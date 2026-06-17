@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import tempfile
 from datetime import datetime, timezone
 
 
@@ -38,8 +40,11 @@ def _load(path: str = FINDINGS_FILE) -> list:
 
 
 def _save(findings: list, path: str = FINDINGS_FILE) -> None:
-    with open(path, "w") as f:
+    dir_ = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(findings, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, path)
 
 
 def _detect_severity(text: str) -> str:
