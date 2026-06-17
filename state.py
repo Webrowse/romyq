@@ -70,6 +70,10 @@ def audit_due(data: dict) -> bool:
     ) >= data["audit_interval"]
 
 
+def mark_completed(data: dict) -> None:
+    data["status"] = "completed"
+
+
 def next_mode(data: dict) -> str:
     if audit_due(data):
         return "audit"

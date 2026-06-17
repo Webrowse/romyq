@@ -18,6 +18,7 @@ from state import (
     set_last_commit,
     next_mode,
     mark_audit_complete,
+    mark_completed,
 )
 
 from claude_runner import (
@@ -26,6 +27,7 @@ from claude_runner import (
 
 from bootstrap import bootstrap_workspace
 from audit_extractor import extract_and_save_findings
+from completion_evaluator import evaluate_completion
 
 
 load_dotenv()
@@ -117,6 +119,29 @@ def main() -> None:
         state_text = read_file(STATE_MD)
 
         repo_before = inspect_repository(workspace)
+
+        if state["tasks_completed"] > 0:
+            completed, reason = evaluate_completion(
+                api_key=api_key,
+                mission=mission,
+                workspace=workspace,
+                git_log=repo_before["git_log"],
+            )
+
+            print("\n" + "=" * 80)
+            print("COMPLETION CHECK")
+            print("=" * 80)
+            print(f"completed: {completed}")
+            print(f"reason: {reason}")
+            print("=" * 80)
+
+            if completed:
+                mark_completed(state)
+                heartbeat(state)
+                save_state(state, STATE_FILE)
+                print("\nMISSION COMPLETE")
+                print(reason)
+                break
 
         mode = next_mode(state)
 
