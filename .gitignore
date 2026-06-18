@@ -1,9 +1,24 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.tmp
-.env
-workspace/
 *.egg-info/
 dist/
 build/
+
+# Secrets
+.env
+
+# Romyq runtime state (legacy CWD paths — all live under .romyq/ now)
+state.json
+state.md
+task_history.json
+audit_report.json
+
+# User content
+mission.md
+.romyq/
+
+# Managed workspaces
+workspace/
