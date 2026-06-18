@@ -5,8 +5,9 @@ import sys
 from pathlib import Path
 
 from . import __version__, notes as notes_mod, store
-from .mission import create_template, exists as mission_exists
-from .workspace import bootstrap, is_git_repo, _ensure_gitignore_entry, detect
+from .findings import unresolved as findings_unresolved
+from .mission import create_template, exists as mission_exists, load as load_mission
+from .workspace import bootstrap, is_git_repo, _ensure_gitignore_entry, detect, git_log
 from .state import load as load_state
 from .history import recent
 
@@ -358,6 +359,181 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# ── health ────────────────────────────────────────────────────────────────────
+
+def cmd_health(args: argparse.Namespace) -> None:
+    from datetime import datetime, timezone
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    W = 16
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    print(f"romyq health: {root}\n")
+
+    try:
+        state = load_state(store.state_path(workspace_path))
+    except Exception:
+        print("  No state found. Has romyq been run yet?")
+        return
+
+    row("status", state["status"])
+
+    # Task counts from full history
+    all_entries = recent(limit=100000, path=store.history_path(workspace_path))
+    n_passed = sum(1 for e in all_entries if e["success"])
+    n_failed = len(all_entries) - n_passed
+    tasks_str = f"{state['tasks_completed']} completed"
+    if all_entries:
+        tasks_str += f"  ({n_passed} passed / {n_failed} failed)"
+    row("tasks", tasks_str)
+
+    # Last commit
+    row("last commit", state.get("last_commit") or "(none)")
+
+    # Heartbeat age
+    hb = state.get("heartbeat", "")
+    if hb:
+        try:
+            hb_dt = datetime.fromisoformat(hb)
+            age_s = int((datetime.now(timezone.utc) - hb_dt).total_seconds())
+            if age_s < 60:
+                age_str = f"{age_s}s ago"
+            elif age_s < 3600:
+                m, s = divmod(age_s, 60)
+                age_str = f"{m}m {s:02d}s ago"
+            else:
+                h, r = divmod(age_s, 3600)
+                age_str = f"{h}h {r // 60}m ago"
+            if age_s > 1800:
+                age_str += "  (process may have stopped)"
+            row("heartbeat", age_str)
+        except Exception:
+            row("heartbeat", hb)
+    else:
+        row("heartbeat", "(none — not yet run)")
+
+    # Findings
+    f_items = findings_unresolved(store.findings_path(workspace_path))
+    if f_items:
+        _SEV = ["critical", "high", "medium", "low"]
+        by_sev: dict[str, int] = {}
+        for f in f_items:
+            s = f.get("severity", "medium")
+            by_sev[s] = by_sev.get(s, 0) + 1
+        parts = [f"{by_sev[s]} {s}" for s in _SEV if s in by_sev]
+        row("findings", f"{len(f_items)} unresolved  ({', '.join(parts)})")
+    else:
+        row("findings", "none")
+
+    # Last task preview
+    if state.get("current_task"):
+        preview = state["current_task"].replace("\n", " ")
+        if len(preview) > 100:
+            preview = preview[:97] + "..."
+        row("last task", preview)
+
+
+# ── report ────────────────────────────────────────────────────────────────────
+
+def cmd_report(args: argparse.Namespace) -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq report: {root}")
+
+    # Mission
+    section("Mission")
+    try:
+        mission_text = load_mission(str(root))
+        lines = mission_text.strip().splitlines()
+        for line in lines[:20]:
+            print(f"  {line}")
+        if len(lines) > 20:
+            print(f"  ... ({len(lines) - 20} more lines)")
+    except FileNotFoundError:
+        print("  (mission.md not found — run 'romyq attach')")
+
+    # Progress
+    section("Progress")
+    try:
+        state = load_state(store.state_path(workspace_path))
+        all_entries = recent(limit=100000, path=store.history_path(workspace_path))
+        n_passed = sum(1 for e in all_entries if e["success"])
+        n_failed = len(all_entries) - n_passed
+        print(f"  status:    {state['status']}")
+        print(f"  completed: {state['tasks_completed']} tasks"
+              + (f"  ({n_passed} passed / {n_failed} failed)" if all_entries else ""))
+    except Exception:
+        print("  (romyq has not been run yet)")
+
+    # Recent commits
+    section("Recent Commits")
+    commits = git_log(workspace_path)
+    if commits:
+        for line in commits.splitlines()[:8]:
+            print(f"  {line}")
+    else:
+        print("  (no commits)")
+
+    # Steering notes
+    notes_text = notes_mod.load(store.notes_path(workspace_path))
+    note_lines = [l for l in notes_text.splitlines() if l.strip().startswith("-")]
+    if note_lines:
+        section("Steering Notes")
+        for line in note_lines:
+            print(f"  {line.strip()}")
+
+    # Findings
+    section("Findings")
+    f_items = findings_unresolved(store.findings_path(workspace_path))
+    if f_items:
+        _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        for f in sorted(f_items, key=lambda x: _SEV_ORDER.get(x.get("severity", "medium"), 2)):
+            sev = f.get("severity", "medium").upper()[:4]
+            print(f"  [{sev:<4}]  {f['title'][:68]}")
+    else:
+        print("  No unresolved findings.")
+
+    # Recent task history
+    entries = recent(limit=5, path=store.history_path(workspace_path))
+    if entries:
+        section("Recent Tasks")
+        for entry in reversed(entries):
+            mark = "✓" if entry["success"] else "✗"
+            ts = entry["timestamp"][:16].replace("T", " ")
+            preview = entry["task"].replace("\n", " ")[:70]
+            print(f"  {mark} [{ts}]  {preview}")
+
+    print()
+
+
 # ── version ───────────────────────────────────────────────────────────────────
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -488,6 +664,24 @@ def main() -> None:
         help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_health = sub.add_parser("health", help="Show high-level project health summary")
+    p_health.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_health.set_defaults(func=cmd_health)
+
+    p_report = sub.add_parser("report", help="Show a full human-readable project report")
+    p_report.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_report.set_defaults(func=cmd_report)
 
     p_ui = sub.add_parser("ui", help="Launch the TUI dashboard (coming soon)")
     p_ui.set_defaults(func=lambda _: (

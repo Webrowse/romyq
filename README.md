@@ -50,13 +50,37 @@ That's it. Romyq takes over from here.
 
 ## Commands
 
+**Setup**
+
 | Command | Description |
 |---|---|
-| `romyq attach` | Initialize Romyq in the current directory |
+| `romyq attach` | Attach Romyq to an existing git repository |
+| `romyq init` | Create a new managed workspace in the current directory |
 | `romyq doctor` | Validate environment and configuration |
-| `romyq run` | Start the autonomous loop |
-| `romyq ui` | Launch the Textual TUI dashboard |
-| `romyq status` | Show current mission and task state |
+
+**Running**
+
+| Command | Description |
+|---|---|
+| `romyq run` | Start the autonomous development loop |
+| `romyq note "message"` | Inject a steering note into the next task |
+
+**Observability**
+
+| Command | Description |
+|---|---|
+| `romyq health` | High-level health summary: tasks, failures, findings, heartbeat |
+| `romyq report` | Full project report: mission, progress, commits, notes, findings |
+| `romyq status` | Raw state: current task, last commit, heartbeat timestamp |
+| `romyq logs` | Per-task history with success/failure and validation reason |
+| `romyq info` | Detected language, frameworks, test suite, and build commands |
+
+**Meta**
+
+| Command | Description |
+|---|---|
+| `romyq version` | Show version, install type, and Python version |
+| `romyq ui` | Launch the Textual TUI dashboard (coming soon) |
 
 ---
 
