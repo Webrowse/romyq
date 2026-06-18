@@ -5,7 +5,8 @@ Autonomous AI software project manager.
 Write a mission. Romyq builds it.
 
 ```
-romyq init
+cd myproject
+romyq attach
 romyq run
 ```
 
@@ -34,30 +35,24 @@ pip install romyq
 
 ## Quick start
 
+### Existing repository
+
 ```bash
-# 1. Create a project directory
-mkdir myproject && cd myproject
-
-# 2. Add your DeepSeek API key
+cd myproject
 echo "DEEPSEEK_API_KEY=your-key-here" > .env
-
-# 3. Initialize
-romyq init
-
-# 4. Describe what you want to build (free-form, any length)
-echo "Build a CLI tool that converts Markdown to HTML." > mission.md
-
-# 5. Run
-romyq run
+romyq attach                                    # set up .romyq/ and create mission.md
+echo "Add a REST API for user management." > mission.md
+romyq run                                       # start the loop
 ```
 
-Romyq will start generating and implementing tasks in the `workspace/` directory.
-To use an existing repository instead:
+### New project from scratch
 
 ```bash
-cd existing-project
-romyq attach        # sets up .romyq/ and creates mission.md
-romyq run .         # start the loop
+mkdir myproject && cd myproject
+echo "DEEPSEEK_API_KEY=your-key-here" > .env
+romyq init                                      # creates workspace/ subdirectory
+echo "Build a CLI tool that converts Markdown to HTML." > mission.md
+romyq run workspace                             # run on the workspace/ subdirectory
 ```
 
 > **Safety:** Romyq will not restore (reset) the working tree if you have
@@ -134,34 +129,38 @@ romyq init /path/to/repo    # uses an existing directory
 ### `romyq run [workspace]`
 
 Starts the autonomous development loop. Reads `mission.md` from the current
-directory. Workspace defaults to `workspace/` or `$ROMYQ_WORKSPACE`.
+directory. Defaults to the current directory; override with a path or
+`$ROMYQ_WORKSPACE`.
 
 By default Romyq runs indefinitely. When the mission is considered complete it
 logs the result and continues generating improvements (tests, docs, performance,
 reliability, UX). Pass `--until-complete` to stop instead.
 
 ```bash
-romyq run                        # continuous — runs until interrupted
-romyq run --until-complete       # stops when mission is complete
-romyq run /path/to/repo
+romyq run                        # current directory, continuous
+romyq run --until-complete       # stop when mission is complete
+romyq run /path/to/repo          # explicit path
+romyq run workspace              # workspace/ subdirectory (romyq init default)
 ROMYQ_WORKSPACE=/path/to/repo romyq run
 ```
 
-### `romyq status`
+### `romyq status [workspace]`
 
 Shows the current run state: tasks completed, last commit, heartbeat.
 
 ```bash
 romyq status
+romyq status /path/to/repo
 ```
 
-### `romyq logs [--last N]`
+### `romyq logs [workspace] [--last N]`
 
 Shows recent task history. Defaults to the last 10 entries.
 
 ```bash
 romyq logs
 romyq logs --last 25
+romyq logs /path/to/repo --last 20
 ```
 
 ### `romyq doctor [workspace]`
@@ -193,7 +192,7 @@ All checks passed. Ready to run: romyq run
 | Variable | Default | Description |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | — | Required. DeepSeek API key. |
-| `ROMYQ_WORKSPACE` | `workspace/` | Workspace directory path. |
+| `ROMYQ_WORKSPACE` | current directory | Workspace directory path override. |
 | `ROMYQ_CLAUDE_TIMEOUT` | `1800` | Claude subprocess timeout in seconds (default: 30 minutes). |
 
 Place these in a `.env` file in the directory where you run `romyq`.

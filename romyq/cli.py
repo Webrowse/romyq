@@ -11,7 +11,7 @@ from .state import load as load_state
 from .history import recent
 
 
-def _resolve_workspace(args: argparse.Namespace, default: str = "workspace") -> str:
+def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
     return getattr(args, "workspace", None) or os.getenv("ROMYQ_WORKSPACE", default)
 
 
@@ -32,13 +32,13 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("\nNext steps:")
     print("  1. Edit mission.md")
     print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
-    print("  3. Run: romyq run")
+    print(f"  3. Run: romyq run {workspace_path}")
 
 
 # ── attach ────────────────────────────────────────────────────────────────────
 
 def cmd_attach(args: argparse.Namespace) -> None:
-    workspace_path = _resolve_workspace(args, default=".")
+    workspace_path = _resolve_workspace(args)
     root = Path(workspace_path).resolve()
 
     print(f"Attaching Romyq to: {root}\n")
@@ -122,7 +122,7 @@ def cmd_note(args: argparse.Namespace) -> None:
 # ── info ──────────────────────────────────────────────────────────────────────
 
 def cmd_info(args: argparse.Namespace) -> None:
-    workspace_path = _resolve_workspace(args, default=".")
+    workspace_path = _resolve_workspace(args)
     root = Path(workspace_path).resolve()
 
     if not root.is_dir():
@@ -214,10 +214,11 @@ def cmd_info(args: argparse.Namespace) -> None:
         row("State dir:", f"✗  not attached")
 
     print()
+    path_arg = f" {workspace_path}" if workspace_path != "." else ""
     if not romyq_dir.exists():
-        print(f"  Run 'romyq attach {workspace_path}' to set up Romyq for this repository.")
+        print(f"  Run 'romyq attach{path_arg}' to set up Romyq for this repository.")
     else:
-        print(f"  Run 'romyq run {workspace_path}' to start.")
+        print(f"  Run 'romyq run{path_arg}' to start.")
 
 
 # ── run ───────────────────────────────────────────────────────────────────────
@@ -239,6 +240,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 # ── status ────────────────────────────────────────────────────────────────────
 
 def cmd_status(args: argparse.Namespace) -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
     workspace_path = _resolve_workspace(args)
 
     if not Path(workspace_path).is_dir():
@@ -268,6 +271,8 @@ def cmd_status(args: argparse.Namespace) -> None:
 # ── logs ──────────────────────────────────────────────────────────────────────
 
 def cmd_logs(args: argparse.Namespace) -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
     workspace_path = _resolve_workspace(args)
 
     if not Path(workspace_path).is_dir():
@@ -372,7 +377,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the existing repository (default: current directory)",
+        help="Path to the repository (default: current directory)",
     )
     p_attach.set_defaults(func=cmd_attach)
 
@@ -382,7 +387,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+        help="Path to the workspace (default: current directory)",
     )
     p_note.set_defaults(func=cmd_note)
 
@@ -400,7 +405,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_run.add_argument(
         "--until-complete",
@@ -415,7 +420,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_status.set_defaults(func=cmd_status)
 
@@ -424,7 +429,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_logs.add_argument(
         "--last", type=int, default=10, metavar="N",
@@ -437,7 +442,7 @@ def main() -> None:
         "workspace",
         nargs="?",
         default=None,
-        help="Path to the workspace directory (default: $ROMYQ_WORKSPACE or workspace/)",
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_doctor.set_defaults(func=cmd_doctor)
 
