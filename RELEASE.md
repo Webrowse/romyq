@@ -35,6 +35,26 @@ git push origin main v0.2.0
 The workflow runs automatically. Monitor it at:
 `https://github.com/adarsh/romyq/actions`
 
+### Version verification
+
+After the workflow completes:
+
+```bash
+pip install romyq==0.2.0 --force-reinstall
+romyq --version        # must print: romyq 0.2.0
+romyq version          # must show: wheel or sdist (not editable)
+python -m romyq --version
+```
+
+If you are on an editable install during development, verify the version is not stale:
+
+```bash
+romyq version          # check "install" line
+# if it shows legacy egg-info, re-run:
+pip install -e .
+romyq --version
+```
+
 ---
 
 ## Manual release
@@ -83,7 +103,9 @@ dist/romyq-0.2.0-py3-none-any.whl
 
 ```bash
 pip install dist/romyq-0.2.0-py3-none-any.whl --force-reinstall
-romyq --version   # must print romyq 0.2.0
+romyq --version        # must print: romyq 0.2.0
+romyq version          # must show: wheel or sdist (not editable)
+python -m romyq --version
 romyq doctor
 ```
 
@@ -170,11 +192,13 @@ TWINE_USERNAME=__token__ TWINE_PASSWORD=pypi-... twine upload dist/*
 
 ## Checklist
 
-- [ ] Version bumped in `pyproject.toml`
+- [ ] Version bumped in `pyproject.toml` (single source of truth)
 - [ ] `git status` is clean
 - [ ] `romyq doctor` passes
 - [ ] `python -m build` succeeds
-- [ ] Local wheel installs and `romyq --version` is correct
+- [ ] Local wheel installs: `romyq --version` prints expected version
+- [ ] `romyq version` shows `wheel or sdist` (not `editable` or `0.0.0+unknown`)
+- [ ] `python -m romyq --version` matches `romyq --version`
 - [ ] (Optional) TestPyPI upload verified
 - [ ] `twine upload dist/*` completed without errors (manual) or trusted publisher configured (automated)
 - [ ] `git tag v<version>` pushed

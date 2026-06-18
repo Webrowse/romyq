@@ -358,6 +358,42 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# ── version ───────────────────────────────────────────────────────────────────
+
+def cmd_version(args: argparse.Namespace) -> None:
+    import json
+    import sys
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    print(f"romyq {__version__}")
+
+    try:
+        dist = distribution("romyq")
+        direct_url_text = dist.read_text("direct_url.json")
+        if direct_url_text:
+            data = json.loads(direct_url_text)
+            if data.get("dir_info", {}).get("editable"):
+                src = data.get("url", "").removeprefix("file://")
+                print(f"  install  editable ({src})")
+                print("  note     run 'pip install -e .' after bumping pyproject.toml version")
+            else:
+                print("  install  wheel or sdist")
+        else:
+            # Old-style egg-info editable (no direct_url.json)
+            dist_path = str(getattr(dist, "_path", ""))
+            if "egg-info" in dist_path or "egg-link" in dist_path:
+                print("  install  editable (legacy egg-info — re-run 'pip install -e .' after version bumps)")
+            else:
+                print("  install  wheel or sdist")
+    except PackageNotFoundError:
+        print("  install  none — package not installed via pip (version above is a fallback)")
+
+    if __version__ == "0.0.0+unknown":
+        print("  warning  version unknown — install with 'pip install -e .' or 'pip install romyq'")
+
+    print(f"  python   {sys.version.split()[0]}")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -458,6 +494,9 @@ def main() -> None:
         print("romyq ui is not yet available."),
         print("Follow https://github.com/adarsh/romyq for updates."),
     ))
+
+    p_version = sub.add_parser("version", help="Show version and install information")
+    p_version.set_defaults(func=cmd_version)
 
     args = parser.parse_args()
     args.func(args)

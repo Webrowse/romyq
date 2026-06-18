@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Fix: `romyq init` now creates everything (`.romyq/`, `mission.md`, git repo) inside the workspace directory, not split between the workspace and its parent
+- Fix: `romyq attach` now creates `mission.md` inside the workspace directory when a path is specified
+- Fix: version fallback changed from hardcoded `"0.1.0"` to `"0.0.0+unknown"` so misconfigured installs are clearly visible
+- Add: `romyq version` subcommand — shows version, install type (editable vs wheel), and Python version
+- Add: regression tests for the init flow (`tests/test_init_flow.py`)
+
 ## 0.1.0 — Initial alpha
 
 First public release.

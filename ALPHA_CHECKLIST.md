@@ -26,12 +26,12 @@ Run through this checklist before each alpha release and after significant chang
 
 ## New Project Onboarding
 
-- [ ] `romyq init` creates `mission.md` and `workspace/`
-- [ ] `romyq init` initializes a git repo and creates an initial commit
-- [ ] `romyq doctor` passes after `romyq init`
-- [ ] Editing `mission.md` and running `romyq run workspace` starts the loop
-- [ ] `romyq status workspace` shows state after the first task completes
-- [ ] `romyq logs workspace` shows history after the first task completes
+- [ ] `romyq init` creates `mission.md`, `.romyq/`, and a git repo in the current directory
+- [ ] `romyq init myproject` creates everything inside `myproject/` (not the parent dir)
+- [ ] `romyq doctor` passes immediately after `romyq init` with no extra steps
+- [ ] Editing `mission.md` and running `romyq run` starts the loop
+- [ ] `romyq status` shows state after the first task completes
+- [ ] `romyq logs` shows history after the first task completes
 
 ---
 
@@ -86,12 +86,25 @@ Run through this checklist before each alpha release and after significant chang
 
 ---
 
+## Version Consistency
+
+- [ ] `romyq --version` matches the `version` field in `pyproject.toml`
+- [ ] `romyq version` does not show `0.0.0+unknown`
+- [ ] `python -m romyq --version` reports the same version as `romyq --version`
+- [ ] After `pip install dist/*.whl --force-reinstall`, `romyq --version` reports the wheel version
+- [ ] For editable installs: after bumping `pyproject.toml` version, re-run `pip install -e .` and confirm `romyq version` reflects the new version
+- [ ] `romyq version` shows `editable` for dev installs and `wheel or sdist` for release installs
+
+---
+
 ## Release Verification
 
 - [ ] `python -m build` produces `dist/*.whl` and `dist/*.tar.gz` without errors
 - [ ] Version in `pyproject.toml` matches the intended release tag
 - [ ] `git status` is clean before tagging
+- [ ] `romyq --version` and `romyq version` both report the release version (install wheel to verify)
 - [ ] Pushing `v*` tag triggers the GitHub Actions release workflow
 - [ ] All 4 platform binaries appear in the GitHub Release assets
 - [ ] PyPI publish step completes (check Actions logs)
 - [ ] `pip install romyq==<version>` installs the new version from PyPI
+- [ ] `romyq version` after PyPI install shows `wheel or sdist` (not `editable`)
