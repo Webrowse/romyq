@@ -447,6 +447,12 @@ def main() -> None:
     )
     p_doctor.set_defaults(func=cmd_doctor)
 
+    p_ui = sub.add_parser("ui", help="Launch the TUI dashboard (coming soon)")
+    p_ui.set_defaults(func=lambda _: (
+        print("romyq ui is not yet available."),
+        print("Follow https://github.com/adarsh/romyq for updates."),
+    ))
+
     args = parser.parse_args()
     args.func(args)
 
