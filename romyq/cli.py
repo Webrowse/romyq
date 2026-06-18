@@ -91,10 +91,11 @@ def cmd_attach(args: argparse.Namespace) -> None:
             parts.append(d["test_framework"])
         print(f"\nDetected: {', '.join(parts)}")
 
+    path_arg = f" {workspace_path}" if workspace_path != "." else ""
     print("\nNext steps:")
     print("  1. Edit mission.md — describe your goals for this project")
-    print(f"  2. romyq info {workspace_path}")
-    print(f"  3. romyq run {workspace_path}")
+    print(f"  2. romyq info{path_arg}")
+    print(f"  3. romyq run{path_arg}")
 
 
 # ── note ──────────────────────────────────────────────────────────────────────

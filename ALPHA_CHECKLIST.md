@@ -29,9 +29,9 @@ Run through this checklist before each alpha release and after significant chang
 - [ ] `romyq init` creates `mission.md` and `workspace/`
 - [ ] `romyq init` initializes a git repo and creates an initial commit
 - [ ] `romyq doctor` passes after `romyq init`
-- [ ] Editing `mission.md` and running `romyq run` starts the loop
-- [ ] `romyq status` shows state after the first task completes
-- [ ] `romyq logs` shows history after the first task completes
+- [ ] Editing `mission.md` and running `romyq run workspace` starts the loop
+- [ ] `romyq status workspace` shows state after the first task completes
+- [ ] `romyq logs workspace` shows history after the first task completes
 
 ---
 
@@ -40,8 +40,8 @@ Run through this checklist before each alpha release and after significant chang
 - [ ] `romyq attach` on a clean existing repo creates `.romyq/` and `mission.md`
 - [ ] `romyq attach` adds `.romyq/` to `.gitignore` without breaking the repo
 - [ ] `romyq info` shows correct language, frameworks, and test suite
-- [ ] `romyq run .` starts the loop after attaching
-- [ ] Running `romyq run .` without prior attach still works (bootstrap handles it)
+- [ ] `romyq run` starts the loop after attaching (current directory by default)
+- [ ] Running `romyq run` without prior attach still works (bootstrap handles it)
 
 ---
 

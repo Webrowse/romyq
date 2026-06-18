@@ -181,7 +181,7 @@ romyq doctor
   ✓  claude CLI  (/usr/local/bin/claude)
   ✓  git  (/usr/bin/git)
   ✓  mission.md  (found)
-  ✓  workspace (workspace/)  (exists)
+  ✓  workspace (./)  (exists)
   ✓  workspace is a git repo  (yes)
 
 All checks passed. Ready to run: romyq run
