@@ -534,6 +534,30 @@ def cmd_report(args: argparse.Namespace) -> None:
     print()
 
 
+# ── ui ────────────────────────────────────────────────────────────────────────
+
+def cmd_ui(args: argparse.Namespace) -> None:
+    try:
+        from .ui import launch
+    except ImportError:
+        print("romyq ui requires the 'textual' library.")
+        print()
+        print("Install it with:")
+        print("  pip install 'romyq[ui]'")
+        print()
+        print("Or install textual directly:")
+        print("  pip install textual")
+        sys.exit(1)
+
+    workspace_path = _resolve_workspace(args)
+
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    launch(workspace_path)
+
+
 # ── version ───────────────────────────────────────────────────────────────────
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -683,11 +707,14 @@ def main() -> None:
     )
     p_report.set_defaults(func=cmd_report)
 
-    p_ui = sub.add_parser("ui", help="Launch the TUI dashboard (coming soon)")
-    p_ui.set_defaults(func=lambda _: (
-        print("romyq ui is not yet available."),
-        print("Follow https://github.com/adarsh/romyq for updates."),
-    ))
+    p_ui = sub.add_parser("ui", help="Launch the Textual TUI dashboard")
+    p_ui.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_ui.set_defaults(func=cmd_ui)
 
     p_version = sub.add_parser("version", help="Show version and install information")
     p_version.set_defaults(func=cmd_version)

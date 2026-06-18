@@ -35,6 +35,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+ui  = ["textual>=0.50"]
 
 [project.urls]
 Repository = "https://github.com/adarsh/romyq"

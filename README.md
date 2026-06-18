@@ -5,7 +5,7 @@ Autonomous AI software project manager.
 Give Romyq a software goal.
 It plans, codes, commits, audits, and keeps improving until you stop it.
 
-> Screenshot coming soon — `romyq ui` (Textual TUI)
+> Run `romyq ui` to launch the live dashboard while `romyq run` is active.
 
 ---
 
@@ -124,6 +124,51 @@ ROMYQ_WORKSPACE=/path/to/repo romyq run
 - Claude Code installed and authenticated
 - DeepSeek API key
 - Git initialized in your project directory
+
+---
+
+## Dashboard
+
+`romyq ui` opens a live Textual dashboard that reads state files while `romyq run` is active in another terminal.
+
+```
+┌─ romyq  /path/to/project  ● running  tasks:12  hb:30s  commit:abc1234 ─┐
+│                                                                          │
+│  Current Task                 │  Claude Output                          │
+│  ─────────────────────────    │  ──────────────────────────────────     │
+│  Implement JWT authentication │  Created auth/jwt.py                    │
+│  for the admin API. Add       │  Added TokenMiddleware to app.py        │
+│  middleware to validate all   │  All 24 tests passing                   │
+│  protected routes.            │  Committed: feat: add JWT auth          │
+│  ─────────────────────────    │                                         │
+│  Task History                 │  ──────────────────────────────────     │
+│  ─────────────────────────    │  Findings          │  Notes             │
+│  ✓ 15:42 impl  Add OAuth...   │  ─────────────────────────────────     │
+│  ✗ 15:40 impl  Add tests...   │  [HIGH]  Repeated failure: progress    │
+│  ✓ 15:38 audi  Fix vulns...   │  [MEDI]  Missing input validation      │
+│  ✓ 15:35 impl  Add models...  │                                         │
+│                               │                                         │
+└──────────────────────────────────────────────────────────────────────────┘
+│  q quit  r refresh                                                       │
+```
+
+**Install the dashboard:**
+
+```bash
+pip install 'romyq[ui]'
+```
+
+**Launch alongside a running loop:**
+
+```bash
+# Terminal 1
+romyq run
+
+# Terminal 2
+romyq ui
+```
+
+The dashboard polls state files every 2 seconds. No changes to the running loop are required.
 
 ---
 
