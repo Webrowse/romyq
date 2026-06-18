@@ -18,21 +18,27 @@ def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
 # ── init ──────────────────────────────────────────────────────────────────────
 
 def cmd_init(args: argparse.Namespace) -> None:
-    workspace_path = args.workspace
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
 
-    created = create_template()
+    bootstrap(workspace_path)           # creates git repo + .gitignore + initial commit
+    store.ensure_dir(workspace_path)    # creates .romyq/
+
+    created = create_template(str(root))   # mission.md inside workspace, not CWD parent
     if created:
         print("Created mission.md — edit it to describe what you want to build.")
     else:
         print("mission.md already exists.")
 
-    bootstrap(workspace_path)
-    print(f"\nWorkspace ready at: {workspace_path}/")
-    print(f"State directory:    {workspace_path}/.romyq/")
+    print(f"\nWorkspace ready at: {root}/")
+    print(f"State directory:    {root}/.romyq/")
     print("\nNext steps:")
     print("  1. Edit mission.md")
     print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
-    print(f"  3. Run: romyq run {workspace_path}")
+    if workspace_path == ".":
+        print("  3. Run: romyq run")
+    else:
+        print(f"  3. cd {root} && romyq run")
 
 
 # ── attach ────────────────────────────────────────────────────────────────────
@@ -71,9 +77,9 @@ def cmd_attach(args: argparse.Namespace) -> None:
         _ensure_gitignore_entry(str(root), ".romyq/")
         print(f"  ✓  .romyq/ added to .gitignore  (commit this change when ready)")
 
-    # Create mission.md in CWD if absent
-    mission_path = Path("mission.md").resolve()
-    created = create_template()
+    # Create mission.md inside workspace if absent
+    mission_path = root / "mission.md"
+    created = create_template(str(root))
     if created:
         print(f"  ✓  Created mission.md  ({mission_path})")
     else:
@@ -368,8 +374,8 @@ def main() -> None:
     p_init.add_argument(
         "workspace",
         nargs="?",
-        default="workspace",
-        help="Path to the workspace directory (default: workspace/)",
+        default=None,
+        help="Path to the workspace directory (default: current directory)",
     )
     p_init.set_defaults(func=cmd_init)
 

@@ -17,8 +17,8 @@ No template, schema, or structure required.
 """
 
 
-def load() -> str:
-    path = Path(MISSION_FILE)
+def load(base: str = ".") -> str:
+    path = Path(base) / MISSION_FILE
 
     if not path.exists():
         raise FileNotFoundError(
@@ -28,12 +28,12 @@ def load() -> str:
     return path.read_text()
 
 
-def exists() -> bool:
-    return Path(MISSION_FILE).exists()
+def exists(base: str = ".") -> bool:
+    return (Path(base) / MISSION_FILE).exists()
 
 
-def create_template() -> bool:
-    path = Path(MISSION_FILE)
+def create_template(base: str = ".") -> bool:
+    path = Path(base) / MISSION_FILE
 
     if path.exists():
         return False
