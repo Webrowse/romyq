@@ -1,8 +1,10 @@
 from openai import OpenAI
 
 from . import store
+from .context import load as load_context
 from .history import recent_text
 from .findings import unresolved_text
+from .planning import build_planning_context
 from .workspace import profile
 
 
@@ -106,15 +108,28 @@ def generate_task(
     mode: str,
     workspace: str,
     notes: str = "",
+    state_dict: dict | None = None,
 ) -> str:
     guidance = _AUDIT_GUIDANCE if mode == "audit" else _IMPL_GUIDANCE
 
     notes_section = f"\nSteering Notes (highest priority — follow these before anything else):\n\n{notes.strip()}\n" if notes.strip() else ""
 
+    # Build planning context from repository memory, recent failures, and blocked tasks
+    planning_ctx = ""
+    if state_dict is not None:
+        ctx_text = load_context(workspace)
+        planning_ctx = build_planning_context(
+            state=state_dict,
+            findings_path=store.findings_path(workspace),
+            history_path=store.history_path(workspace),
+            context_text=ctx_text,
+        )
+    planning_section = f"\n{planning_ctx}\n" if planning_ctx else ""
+
     prompt = f"""Mission:
 
 {mission}
-{notes_section}
+{notes_section}{planning_section}
 Current State:
 
 {state}

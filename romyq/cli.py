@@ -374,6 +374,13 @@ def cmd_explain(args: argparse.Namespace) -> None:
     else:
         print("  (none recorded)")
 
+    section("Recovery Guidance")
+    from .recovery import analyze_recovery_state
+    rec = analyze_recovery_state(state)
+    sev_prefix = {"ok": "  ✓", "warning": "  !", "error": "  ✗"}.get(rec.severity, "  ?")
+    print(f"{sev_prefix}  {rec.situation}")
+    print(f"     {rec.recommendation}")
+
     print()
 
 
@@ -559,6 +566,19 @@ def cmd_health(args: argparse.Namespace) -> None:
         if len(preview) > 100:
             preview = preview[:97] + "..."
         row("last task", preview)
+
+    # Stuck-condition warnings
+    from .health_checks import detect_stuck_conditions
+    warnings = detect_stuck_conditions(
+        state=state,
+        history_path=store.history_path(workspace_path),
+        events_path=store.events_path(workspace_path),
+    )
+    if warnings:
+        print()
+        print("  Warnings:")
+        for w in warnings:
+            print(f"  !  {w}")
 
 
 # ── report ────────────────────────────────────────────────────────────────────
@@ -764,6 +784,141 @@ def cmd_stop(args: argparse.Namespace) -> None:
     save_state(state, s_path)
     print("Stop requested. Romyq will exit after the current task completes.")
     print("(If rate-limited and sleeping, it will wake early to honour the stop.)")
+
+
+# ── learn ─────────────────────────────────────────────────────────────────────
+
+def cmd_learn(args: argparse.Namespace) -> None:
+    """Generate or refresh .romyq/context.md from static analysis."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.ensure_dir(workspace_path)
+
+    from .context import write as ctx_write
+    path = ctx_write(workspace_path)
+    print(f"Repository context written to {path}")
+    print()
+    from .context import load as ctx_load
+    print(ctx_load(workspace_path))
+
+
+# ── stats ─────────────────────────────────────────────────────────────────────
+
+def cmd_stats(args: argparse.Namespace) -> None:
+    """Show long-run operational statistics."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    try:
+        state = load_state(store.state_path(workspace_path))
+    except Exception:
+        print("No state found. Has romyq been run yet?")
+        sys.exit(1)
+
+    from .metrics import compute as compute_metrics
+    m = compute_metrics(
+        state=state,
+        history_path=store.history_path(workspace_path),
+        events_path=store.events_path(workspace_path),
+    )
+
+    if getattr(args, "json", False):
+        print(_json.dumps(m._asdict(), indent=2))
+        return
+
+    W = 26
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    print(f"romyq stats: {root}\n")
+    row("Tasks completed:", str(m.tasks_completed))
+    row("Tasks blocked:", str(m.tasks_blocked))
+    row("History entries:", str(m.history_entries))
+    row("Validator pass / fail:", f"{m.success_count} / {m.failure_count}")
+    if m.validator_pass_rate >= 0:
+        row("Validator pass rate:", f"{m.validator_pass_rate * 100:.1f}%")
+    else:
+        row("Validator pass rate:", "n/a (no history)")
+    row("Cancellations:", str(m.cancellation_count))
+    row("Rate-limit events:", str(m.rate_limit_count))
+    row("Total events logged:", str(m.event_count))
+    row("Runtime (hours):", f"{m.runtime_hours:.2f}")
+    if m.first_event_ts:
+        row("First event:", m.first_event_ts[:19].replace("T", " ") + " UTC")
+    if m.last_event_ts:
+        row("Last event:", m.last_event_ts[:19].replace("T", " ") + " UTC")
+
+
+# ── timeline ──────────────────────────────────────────────────────────────────
+
+def cmd_timeline(args: argparse.Namespace) -> None:
+    """Show a human-readable event timeline."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .events import tail
+    events = tail(store.events_path(workspace_path), n=args.last)
+
+    if not events:
+        print("No events recorded yet.")
+        return
+
+    if getattr(args, "json", False):
+        print(_json.dumps(events, indent=2))
+        return
+
+    _EVT_LABELS = {
+        "loop_started":        "▶  Loop started",
+        "loop_stopped":        "■  Loop stopped",
+        "task_started":        "→  Task started",
+        "task_completed":      "✓  Task completed",
+        "task_blocked":        "✗  Task blocked",
+        "validator_passed":    "✓  Validator passed",
+        "validator_failed":    "✗  Validator failed",
+        "no_action_required":  "–  No action required",
+        "retry":               "↺  Retry",
+        "pause_detected":      "‖  Paused",
+        "resume_detected":     "▶  Resumed",
+        "stop_detected":       "■  Stop detected",
+        "rate_limit_detected": "⏳ Rate limit",
+        "rate_limit_recovered":"✓  Rate limit cleared",
+        "claude_cancelled":    "✗  Claude cancelled",
+        "phase_changed":       "⟳  Phase changed",
+        "crash_recovered":     "↺  Crash recovered",
+    }
+
+    for entry in events:
+        ts = entry.get("ts", "")[:19].replace("T", " ")
+        evt = entry.get("event", "?")
+        label = _EVT_LABELS.get(evt, f"   {evt}")
+        extras = {k: v for k, v in entry.items() if k not in ("ts", "event")}
+        detail = ""
+        if "reason" in extras:
+            detail = f"  {extras['reason']}"
+        elif "task_preview" in extras:
+            detail = f"  {str(extras['task_preview'])[:60]}"
+        elif "key" in extras:
+            detail = f"  key={extras['key']}"
+        print(f"[{ts}] {label}{detail}")
 
 
 # ── version ───────────────────────────────────────────────────────────────────
@@ -979,6 +1134,49 @@ def main() -> None:
         help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_explain.set_defaults(func=cmd_explain)
+
+    p_learn = sub.add_parser("learn", help="Generate or refresh .romyq/context.md from static analysis")
+    p_learn.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_learn.set_defaults(func=cmd_learn)
+
+    p_stats = sub.add_parser("stats", help="Show long-run operational statistics")
+    p_stats.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_stats.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output stats as JSON",
+    )
+    p_stats.set_defaults(func=cmd_stats)
+
+    p_timeline = sub.add_parser("timeline", help="Show a human-readable event timeline")
+    p_timeline.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_timeline.add_argument(
+        "--last", type=int, default=50, metavar="N",
+        help="Number of events to show (default: 50)",
+    )
+    p_timeline.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output events as JSON",
+    )
+    p_timeline.set_defaults(func=cmd_timeline)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

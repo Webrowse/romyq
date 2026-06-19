@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0
+
+**Long-running autonomous execution — safe for multi-day unattended operation:**
+
+- Add: `romyq learn` — generate or refresh `.romyq/context.md` from static analysis (language, frameworks, build commands, CI workflows, coding conventions, git age). No AI required; deterministic and safe to regenerate at any time. Context is automatically generated on first `romyq run` and included in every DeepSeek planning prompt.
+- Add: `romyq stats [--json]` — long-run operational statistics: tasks completed, tasks blocked, validator pass/fail counts, pass rate, cancellation count, rate-limit event count, total events, and runtime hours (derived from `loop_started`/`loop_stopped` event pairs so it survives restart).
+- Add: `romyq timeline [--last N] [--json]` — human-readable event timeline with labelled event types and inline detail (reason, task preview, key).
+- Add: `romyq explain` now shows a "Recovery Guidance" section with severity (`ok`/`warning`/`error`), a one-line situation description, and a concrete recommendation derived from the current phase, heartbeat age, failure streak, and stop/pause flags.
+- Add: `romyq health` now shows a "Warnings" section listing stuck conditions: task retried above ceiling, consecutive failure streak, validator evidence unchanged across N failures, stale heartbeat in an active phase, and rate-limit storm detection.
+- Add: `romyq/context.py` — repository memory module. `generate()` performs static analysis; `write()` atomically writes `.romyq/context.md`; `load()` reads it. Context includes project type, frameworks, build commands, test runner, CI/CD systems, coding conventions (editorconfig, ruff, black, mypy, ESLint, Prettier, husky), and first-commit date.
+- Add: `romyq/recovery.py` — `RecoveryState(situation, recommendation, severity)` NamedTuple. `analyze_recovery_state()` handles all phases plus: stop-requested mismatch, pause-flag mismatch, blocked task, stale heartbeat (>30 min in active phase), and consecutive-failure streak (≥5).
+- Add: `romyq/metrics.py` — `LoopMetrics` NamedTuple + `compute(state, history_path, events_path)`. Computes all statistics from existing files; no new persistent state.
+- Add: `romyq/health_checks.py` — `detect_stuck_conditions(state, history_path, events_path, heartbeat_age_s)` returns a list of warning strings. Detects: blocked task (attempts ≥ ceiling), consecutive failure streak (≥5), validator evidence unchanged across last 3 failures, stale heartbeat in active phase (>30 min), and rate-limit storm (≥3 in last 50 events).
+- Add: `romyq/planning.py` — `build_planning_context()` assembles a prompt section from repository memory, last 10 failures, blocked-task warning (if any), last validator evidence, and unresolved findings. Injected into every DeepSeek `generate_task()` call so the planner avoids repeated failed approaches.
+- Add: `romyq/loop.py` auto-generates `.romyq/context.md` at startup when absent, or when `ROMYQ_REFRESH_CONTEXT=1` is set.
+- Add: `romyq/store.py` exports `context_path(workspace)` for `.romyq/context.md`.
+- Add: `manager.generate_task()` accepts optional `state_dict` parameter; when provided, builds and injects the full planning context into the DeepSeek prompt.
+
+**Testing:**
+
+- Add: `tests/test_context.py` — 20 tests for context generation, CI/workflow detection, convention detection, atomic write, and load.
+- Add: `tests/test_recovery.py` — 20 tests for `RecoveryState` and `analyze_recovery_state()` across all phases, special cases, and edge conditions.
+- Add: `tests/test_metrics.py` — 17 tests for `LoopMetrics`, `compute()`, history counting, event counting, and runtime hour calculation.
+- Add: `tests/test_stuck_detection.py` — 20 tests for `detect_stuck_conditions()` covering all five detection categories.
+- Add: `tests/test_planning_context.py` — 18 tests for `build_planning_context()` covering all injected sections and edge cases.
+- Add: `tests/test_timeline.py` — 12 tests for `romyq timeline` and `romyq stats` CLI commands.
+- Add: `tests/test_long_running.py` — 7-day reliability simulation: 7-session restart resilience, progressive failure accumulation, rate-limit storm detection, crash recovery analysis, context persistence, and stats accumulation.
+- Tests: 244 → 359 (+115).
+
 ## 0.3.0
 
 **Durability and recovery hardening:**

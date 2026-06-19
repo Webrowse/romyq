@@ -165,6 +165,19 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     _max_events = int(os.getenv("ROMYQ_MAX_EVENTS", "10000"))
     prune_events(e_path, max_entries=_max_events)
 
+    # Auto-generate .romyq/context.md if absent (or if ROMYQ_REFRESH_CONTEXT=1).
+    try:
+        from . import context as _ctx_mod
+        from .store import context_path as _ctx_path_fn
+        import pathlib as _pathlib
+        _ctx_path = _ctx_path_fn(workspace_path)
+        _refresh = os.getenv("ROMYQ_REFRESH_CONTEXT", "0") == "1"
+        if _refresh or not _pathlib.Path(_ctx_path).exists():
+            _ctx_mod.write(workspace_path)
+            activity.log("Repository context written to .romyq/context.md")
+    except Exception:
+        pass
+
     def _heartbeat_cb(elapsed: int) -> None:
         remaining = max(0, timeout_s - elapsed)
         e_fmt = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
@@ -290,6 +303,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 mode=mode,
                 workspace=workspace_path,
                 notes=notes.load(store.notes_path(workspace_path)),
+                state_dict=state,
             )
             activity.log("Task generated.")
             key = _task_key(task)
