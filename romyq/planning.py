@@ -1,12 +1,35 @@
 """Build enriched planning context for the DeepSeek task-generation prompt.
 
-Injects recent failures, blocked-task evidence, and repository memory into
-every planning call so the planner can avoid repeated failed approaches.
+Injects recent failures, blocked-task evidence, repository memory, and
+execution-memory failure patterns into every planning call so the planner
+can avoid repeated failed approaches.
 """
 from __future__ import annotations
 
 from .findings import unresolved as findings_unresolved
 from .history import recent as history_recent
+
+
+def build_memory_context(memory_path: str, limit: int = 8) -> str:
+    """Return a prompt section summarising the top failed tasks from memory.
+
+    Returns '' when memory is empty or the path is absent.
+    """
+    if not memory_path:
+        return ""
+    from . import memory as mem_mod
+    top = mem_mod.most_failed(memory_path, limit=limit)
+    if not top:
+        return ""
+
+    lines = [f"## Execution Memory — Top Failed Tasks ({len(top)} shown)\n"]
+    lines.append("These tasks have failed repeatedly. Avoid proposing them again.\n")
+    for fp, count, preview, last_reason in top:
+        task_preview = preview[:100].replace("\n", " ")
+        reason_preview = last_reason[:80].replace("\n", " ") if last_reason else "unknown"
+        lines.append(f"- [{count}x failed] {task_preview}")
+        lines.append(f"  Last reason: {reason_preview}")
+    return "\n".join(lines)
 
 
 def build_planning_context(
@@ -16,10 +39,12 @@ def build_planning_context(
     context_text: str = "",
     max_findings: int = 20,
     max_failures: int = 10,
+    memory_path: str = "",
 ) -> str:
     """Return a prompt section to inject into the DeepSeek planning prompt.
 
-    context_text: the contents of .romyq/context.md (pass '' to omit).
+    context_text: contents of .romyq/context.md (pass '' to omit).
+    memory_path:  path to .romyq/memory.json (pass '' to omit).
     """
     parts: list[str] = []
 
@@ -27,7 +52,12 @@ def build_planning_context(
     if context_text.strip():
         parts.append("## Repository Context\n\n" + context_text.strip())
 
-    # ── Recent failures ───────────────────────────────────────────────────────
+    # ── Execution memory — top failed tasks ──────────────────────────────────
+    mem_ctx = build_memory_context(memory_path)
+    if mem_ctx:
+        parts.append(mem_ctx)
+
+    # ── Recent failures (from history.json) ───────────────────────────────────
     all_entries = history_recent(limit=50, path=history_path)
     failures = [e for e in all_entries if not e.get("success")][-max_failures:]
     if failures:
@@ -56,7 +86,7 @@ def build_planning_context(
         )
         parts.append("\n".join(blocked_lines))
 
-    # ── Last validation evidence ───────────────────────────────────────────────
+    # ── Last validation evidence ──────────────────────────────────────────────
     evidence = state.get("last_validation_evidence", [])
     if evidence:
         ev_lines = ["## Last Validator Evidence\n"]

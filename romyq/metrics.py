@@ -1,4 +1,4 @@
-"""Long-run statistics derived from state.json, history.json, and events.log.
+"""Long-run statistics derived from state.json, history.json, events.log, and memory.json.
 
 All metrics are read-only and computed on demand.  No new persistent state is
 introduced — everything is derived from existing files so the metrics survive
@@ -15,18 +15,24 @@ from .history import recent as history_recent
 
 class LoopMetrics(NamedTuple):
     """Snapshot of long-run operational statistics."""
+    # ── core ─────────────────────────────────────────────────────────────────
     tasks_completed: int
     tasks_blocked: int
     history_entries: int
     success_count: int
     failure_count: int
-    validator_pass_rate: float      # 0.0–1.0 (NaN → -1.0 when no history)
+    validator_pass_rate: float      # 0.0–1.0 (-1.0 = no history)
     cancellation_count: int
     rate_limit_count: int
     event_count: int
     first_event_ts: str             # ISO timestamp or ""
     last_event_ts: str              # ISO timestamp or ""
-    runtime_hours: float            # derived from first/last loop_started/stopped events
+    runtime_hours: float            # derived from loop_started/stopped events
+    # ── memory-derived (default 0/-1 when memory_path not provided) ──────────
+    task_retry_rate: float = 0.0        # fraction of unique tasks retried ≥1 time
+    avg_attempts_per_task: float = 0.0  # average execution attempts per unique task
+    blocked_task_rate: float = 0.0      # fraction of total tasks that were blocked
+    planner_loop_count: int = 0         # number of loop patterns detected
 
 
 def _ts_to_dt(ts: str) -> datetime | None:
@@ -37,10 +43,7 @@ def _ts_to_dt(ts: str) -> datetime | None:
 
 
 def _runtime_hours(events_path: str) -> tuple[float, str, str]:
-    """Compute total runtime in hours from loop_started / loop_stopped pairs.
-
-    Also returns (first_event_ts, last_event_ts) for display.
-    """
+    """Compute total runtime in hours from loop_started / loop_stopped pairs."""
     events = events_tail(events_path, n=100_000)
     if not events:
         return 0.0, "", ""
@@ -52,8 +55,7 @@ def _runtime_hours(events_path: str) -> tuple[float, str, str]:
     last_start: datetime | None = None
     for e in events:
         evt = e.get("event", "")
-        ts = e.get("ts", "")
-        dt = _ts_to_dt(ts)
+        dt = _ts_to_dt(e.get("ts", ""))
         if dt is None:
             continue
         if evt == "loop_started":
@@ -64,7 +66,6 @@ def _runtime_hours(events_path: str) -> tuple[float, str, str]:
                 total_seconds += delta
             last_start = None
 
-    # If still running (no final loop_stopped), count to now
     if last_start is not None:
         delta = (datetime.now(timezone.utc) - last_start).total_seconds()
         if delta > 0:
@@ -73,8 +74,13 @@ def _runtime_hours(events_path: str) -> tuple[float, str, str]:
     return round(total_seconds / 3600, 2), first_ts, last_ts
 
 
-def compute(state: dict, history_path: str, events_path: str) -> LoopMetrics:
-    """Compute all metrics from current state, history, and events."""
+def compute(
+    state: dict,
+    history_path: str,
+    events_path: str,
+    memory_path: str = "",
+) -> LoopMetrics:
+    """Compute all metrics from current state, history, events, and (optionally) memory."""
     tasks_completed = state.get("tasks_completed", 0)
 
     # History
@@ -82,12 +88,9 @@ def compute(state: dict, history_path: str, events_path: str) -> LoopMetrics:
     history_entries = len(all_entries)
     success_count = sum(1 for e in all_entries if e.get("success"))
     failure_count = history_entries - success_count
-    if history_entries > 0:
-        pass_rate = round(success_count / history_entries, 4)
-    else:
-        pass_rate = -1.0
+    pass_rate = round(success_count / history_entries, 4) if history_entries > 0 else -1.0
 
-    # Event counts
+    # Events
     counts = count_by_type(events_path)
     total_events = sum(counts.values())
     tasks_blocked = counts.get("task_blocked", 0)
@@ -95,6 +98,29 @@ def compute(state: dict, history_path: str, events_path: str) -> LoopMetrics:
     rate_limit_count = counts.get("rate_limit_detected", 0)
 
     runtime_hours, first_ts, last_ts = _runtime_hours(events_path)
+
+    # Memory-derived metrics
+    mem_retry_rate = 0.0
+    mem_avg_attempts = 0.0
+    mem_blocked_rate = 0.0
+    planner_loops = 0
+
+    if memory_path:
+        try:
+            from . import memory as mem_mod
+            from .loop_detector import detect
+
+            mem_retry_rate = mem_mod.retry_rate(memory_path)
+            mem_avg_attempts = mem_mod.avg_attempts_per_task(memory_path)
+
+            # Blocked-task rate: events-logged blocks vs total history entries
+            if history_entries > 0:
+                mem_blocked_rate = round(tasks_blocked / history_entries, 4)
+
+            fps = mem_mod.recent_fingerprints(memory_path, limit=50)
+            planner_loops = len(detect(fps))
+        except Exception:
+            pass
 
     return LoopMetrics(
         tasks_completed=tasks_completed,
@@ -109,4 +135,8 @@ def compute(state: dict, history_path: str, events_path: str) -> LoopMetrics:
         first_event_ts=first_ts,
         last_event_ts=last_ts,
         runtime_hours=runtime_hours,
+        task_retry_rate=mem_retry_rate,
+        avg_attempts_per_task=mem_avg_attempts,
+        blocked_task_rate=mem_blocked_rate,
+        planner_loop_count=planner_loops,
     )

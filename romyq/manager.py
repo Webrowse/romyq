@@ -123,6 +123,7 @@ def generate_task(
             findings_path=store.findings_path(workspace),
             history_path=store.history_path(workspace),
             context_text=ctx_text,
+            memory_path=store.memory_path(workspace),
         )
     planning_section = f"\n{planning_ctx}\n" if planning_ctx else ""
 

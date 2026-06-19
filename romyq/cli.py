@@ -381,6 +381,16 @@ def cmd_explain(args: argparse.Namespace) -> None:
     print(f"{sev_prefix}  {rec.situation}")
     print(f"     {rec.recommendation}")
 
+    section("Planner Loop Detection")
+    from .health_checks import detect_planner_loops
+    mem_path = store.memory_path(workspace_path)
+    loop_warnings = detect_planner_loops(mem_path) if Path(mem_path).exists() else []
+    if loop_warnings:
+        for w in loop_warnings:
+            print(f"  ! {w}")
+    else:
+        print("  No loops detected.")
+
     print()
 
 
@@ -573,6 +583,7 @@ def cmd_health(args: argparse.Namespace) -> None:
         state=state,
         history_path=store.history_path(workspace_path),
         events_path=store.events_path(workspace_path),
+        memory_path=store.memory_path(workspace_path),
     )
     if warnings:
         print()
@@ -786,6 +797,209 @@ def cmd_stop(args: argparse.Namespace) -> None:
     print("(If rate-limited and sleeping, it will wake early to honour the stop.)")
 
 
+# ── planning ──────────────────────────────────────────────────────────────────
+
+def cmd_planning(args: argparse.Namespace) -> None:
+    """Show the full planning context that would be injected into the next DeepSeek call."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    try:
+        state = load_state(store.state_path(workspace_path))
+    except Exception:
+        state = {}
+
+    from .context import load as ctx_load
+    from .planning import build_planning_context
+    from .health_checks import detect_planner_loops
+    from .loop_detector import detect as detect_loops
+
+    ctx_text = ctx_load(workspace_path)
+    mem_path = store.memory_path(workspace_path)
+
+    planning_ctx = build_planning_context(
+        state=state,
+        findings_path=store.findings_path(workspace_path),
+        history_path=store.history_path(workspace_path),
+        context_text=ctx_text,
+        memory_path=mem_path,
+    )
+
+    loop_warnings = detect_planner_loops(mem_path) if Path(mem_path).exists() else []
+
+    # Repeated-task warnings from memory
+    from . import memory as mem_mod
+    top_failed = mem_mod.most_failed(mem_path, limit=5) if Path(mem_path).exists() else []
+    repeated = [(fp, cnt, preview) for fp, cnt, preview, _ in top_failed if cnt >= 2]
+
+    if getattr(args, "json", False):
+        print(_json.dumps({
+            "planning_context": planning_ctx,
+            "repository_memory_available": bool(ctx_text),
+            "planner_loops": loop_warnings,
+            "repeated_task_warnings": [
+                {"fp": fp, "count": cnt, "preview": preview}
+                for fp, cnt, preview in repeated
+            ],
+            "blocked_task": {
+                "key": state.get("current_task_key", ""),
+                "attempts": state.get("current_task_attempts", 0),
+                "ceiling": state.get("max_task_attempts", 3),
+                "reason": state.get("last_failure_reason", ""),
+            },
+        }, indent=2))
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq planning: {root}")
+
+    section("Repository Memory")
+    if ctx_text.strip():
+        for line in ctx_text.strip().splitlines()[:25]:
+            print(f"  {line}")
+    else:
+        print("  (not yet generated — run 'romyq learn')")
+
+    section("Planning Context")
+    if planning_ctx:
+        for line in planning_ctx.splitlines()[:60]:
+            print(f"  {line}")
+    else:
+        print("  (nothing to inject — no failures or findings recorded yet)")
+
+    section("Planner Loop Detection")
+    if loop_warnings:
+        for w in loop_warnings:
+            print(f"  ! {w}")
+    else:
+        print("  No loops detected.")
+
+    section("Repeated Task Warnings")
+    if repeated:
+        for fp, cnt, preview in repeated:
+            print(f"  [{cnt}x] {preview[:70]}  (fp: {fp})")
+    else:
+        print("  None.")
+
+    section("Blocked Task")
+    key = state.get("current_task_key", "")
+    attempts = state.get("current_task_attempts", 0)
+    ceiling = state.get("max_task_attempts", 3)
+    if key and attempts >= ceiling:
+        print(f"  Key:      {key}")
+        print(f"  Attempts: {attempts}/{ceiling} — BLOCKED")
+        if state.get("last_failure_reason"):
+            print(f"  Reason:   {state['last_failure_reason'][:120]}")
+    else:
+        print("  No blocked task.")
+
+    print()
+
+
+# ── memory ────────────────────────────────────────────────────────────────────
+
+def cmd_memory(args: argparse.Namespace) -> None:
+    """Show execution memory analysis: failures, blocked tasks, and loop detection."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from . import memory as mem_mod
+    from .health_checks import detect_planner_loops
+
+    mem_path = store.memory_path(workspace_path)
+    mem_data = mem_mod.load(mem_path)
+    entries = mem_data.get("entries", [])
+    missions = mem_data.get("missions", {})
+
+    total = len(entries)
+    sr = mem_mod.overall_success_rate(mem_path)
+    rr = mem_mod.retry_rate(mem_path)
+    avg_att = mem_mod.avg_attempts_per_task(mem_path)
+    top_failed = mem_mod.most_failed(mem_path, limit=10)
+    loop_warnings = detect_planner_loops(mem_path)
+
+    if getattr(args, "json", False):
+        print(_json.dumps({
+            "total_entries": total,
+            "success_rate": sr,
+            "retry_rate": rr,
+            "avg_attempts_per_task": avg_att,
+            "most_failed": [
+                {"fp": fp, "count": cnt, "preview": prev, "last_reason": why}
+                for fp, cnt, prev, why in top_failed
+            ],
+            "planner_loops": loop_warnings,
+            "mission_outcomes": missions,
+        }, indent=2))
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    W = 24
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    print(f"romyq memory: {root}")
+
+    section("Summary")
+    row("Total entries:", str(total))
+    if sr >= 0:
+        row("Success rate:", f"{sr * 100:.1f}%")
+    else:
+        row("Success rate:", "n/a (no entries)")
+    row("Retry rate:", f"{rr * 100:.1f}%")
+    row("Avg attempts/task:", f"{avg_att:.2f}")
+
+    section("Most Failed Tasks")
+    if top_failed:
+        for i, (fp, cnt, preview, why) in enumerate(top_failed, 1):
+            print(f"  {i}. [{cnt} failures]  {preview[:70]}")
+            print(f"     fp: {fp}  last reason: {why[:60]}")
+    else:
+        print("  None.")
+
+    section("Planner Loop Detection")
+    if loop_warnings:
+        for w in loop_warnings:
+            print(f"  ! {w}")
+    else:
+        print("  No loops detected.")
+
+    section("Mission Outcomes")
+    if missions:
+        for mfp, rec in missions.items():
+            print(f"  {rec['preview'][:55]}")
+            print(f"    total={rec['total']}  ok={rec['ok']}  blocked={rec['blocked']}")
+    else:
+        print("  No mission outcomes recorded.")
+
+    print()
+
+
 # ── learn ─────────────────────────────────────────────────────────────────────
 
 def cmd_learn(args: argparse.Namespace) -> None:
@@ -832,6 +1046,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
         state=state,
         history_path=store.history_path(workspace_path),
         events_path=store.events_path(workspace_path),
+        memory_path=store.memory_path(workspace_path),
     )
 
     if getattr(args, "json", False):
@@ -860,6 +1075,13 @@ def cmd_stats(args: argparse.Namespace) -> None:
         row("First event:", m.first_event_ts[:19].replace("T", " ") + " UTC")
     if m.last_event_ts:
         row("Last event:", m.last_event_ts[:19].replace("T", " ") + " UTC")
+    if m.task_retry_rate > 0 or m.avg_attempts_per_task > 0:
+        print()
+        print("  Memory-derived:")
+        row("Task retry rate:", f"{m.task_retry_rate * 100:.1f}%")
+        row("Avg attempts/task:", f"{m.avg_attempts_per_task:.2f}")
+        row("Blocked-task rate:", f"{m.blocked_task_rate * 100:.1f}%")
+        row("Planner loops:", str(m.planner_loop_count))
 
 
 # ── timeline ──────────────────────────────────────────────────────────────────
@@ -1134,6 +1356,36 @@ def main() -> None:
         help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
     p_explain.set_defaults(func=cmd_explain)
+
+    p_planning = sub.add_parser("planning", help="Show planning context, loop detection, and memory diagnostics")
+    p_planning.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_planning.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output diagnostics as JSON",
+    )
+    p_planning.set_defaults(func=cmd_planning)
+
+    p_memory = sub.add_parser("memory", help="Show execution memory analysis")
+    p_memory.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_memory.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output memory analysis as JSON",
+    )
+    p_memory.set_defaults(func=cmd_memory)
 
     p_learn = sub.add_parser("learn", help="Generate or refresh .romyq/context.md from static analysis")
     p_learn.add_argument(

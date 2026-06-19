@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import signal
 import subprocess
@@ -10,6 +9,8 @@ from datetime import datetime, timezone
 
 from . import activity, manager, notes, store, workspace as ws
 from .cancel import CancellationToken
+from . import fingerprint as fp_mod
+from . import memory as mem_mod
 from .events import emit, prune as prune_events
 from . import events as ev
 from .findings import add_finding, extract_from_output
@@ -76,7 +77,7 @@ def _make_diagnosis_task(stuck_task: str, n: int) -> str:
 
 
 def _task_key(task: str) -> str:
-    return hashlib.md5(task.encode()).hexdigest()[:12]
+    return fp_mod.fingerprint(task)
 
 
 def _read(path: str) -> str:
@@ -138,6 +139,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     f_path = store.findings_path(workspace_path)
     md_path = store.state_md_path(workspace_path)
     e_path = store.events_path(workspace_path)
+    mem_path = store.memory_path(workspace_path)
 
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(60 * 30)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
@@ -307,6 +309,15 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             )
             activity.log("Task generated.")
             key = _task_key(task)
+
+            # Memory check: warn if this task fingerprint has prior failures.
+            prior_text = mem_mod.prior_outcomes_text(mem_path, task)
+            if prior_text:
+                activity.log(
+                    f"Memory: task fp={key[:8]} has prior failures — "
+                    "injecting failure context for Claude."
+                )
+                task = task + "\n\n" + prior_text
 
             if is_task_blocked(state, key):
                 attempts = state.get("current_task_attempts", 0)
@@ -494,6 +505,27 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             validation_reason=reason,
             path=h_path,
         )
+
+        mission_fp = fp_mod.fingerprint(mission)
+        try:
+            mem_mod.record(
+                path=mem_path,
+                task=task,
+                mission_fp=mission_fp,
+                outcome=outcome,
+                evidence=evidence[:5],
+                failure_reason=reason if outcome == FAILURE else "",
+                retry_count=state.get("current_task_attempts", 0),
+            )
+            mem_mod.update_mission(
+                path=mem_path,
+                mission_fp=mission_fp,
+                preview=mission[:120],
+                completed=(outcome != FAILURE),
+                blocked=is_task_blocked(state, key),
+            )
+        except Exception:
+            pass
 
         set_last_commit(state, after_commit)
         state["last_validation_evidence"] = evidence[:30]  # cap stored evidence

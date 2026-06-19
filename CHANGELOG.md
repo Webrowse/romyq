@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.0
+
+**Execution memory and failure-aware planning — Romyq now remembers its past mistakes.**
+
+**Execution Memory (`romyq/memory.py` + `.romyq/memory.json`):**
+- Add: Per-task execution memory persisted in `.romyq/memory.json`. Each task execution records: task fingerprint, normalized text, mission fingerprint, validator outcome, evidence (capped at 5 lines), failure reason, retry count, completion status, and ISO timestamp.
+- Add: Bounded growth — defaults to 2 000 entries, configurable via `ROMYQ_MAX_MEMORY`. Oldest entries pruned automatically on `record()`.
+- Add: Mission-level outcome tracking. `update_mission()` accumulates per-mission totals (tasks total, completed, blocked) keyed by mission fingerprint; visible in `romyq memory`.
+- Add: `record()`, `entries_for()`, `entries_similar_to()`, `recent_failures()`, `most_failed()`, `prior_outcomes_text()`, `overall_success_rate()`, `retry_rate()`, `avg_attempts_per_task()`, `recent_fingerprints()`, `mission_summary()`, `all_missions()`.
+- All writes are atomic (tmp + fsync + os.replace). Corrupted `memory.json` is silently reset to an empty structure.
+
+**Task Fingerprinting (`romyq/fingerprint.py`):**
+- Add: `normalize(text)` — lowercases, collapses whitespace, strips non-semantic punctuation, preserves `/` and `-` for route paths and hyphenated identifiers.
+- Add: `fingerprint(text)` — 12-character SHA-1 of normalized text. Deterministic; case-insensitive; whitespace- and punctuation-insensitive.
+- Add: `similarity(a, b)` — Jaccard similarity (0.0–1.0) on meaningful word tokens (filler words removed). Scores ≥ 0.4 indicate related tasks.
+- Add: `is_similar(a, b, threshold=0.4)` — shortcut combining exact fingerprint match and Jaccard check.
+- Replace: `loop.py`'s `_task_key()` now uses `fingerprint.fingerprint()` for stable, normalized task identity. Old MD5-based keys expire on restart (no data migration needed — keys only matter for the current session).
+
+**Planner Loop Detection (`romyq/loop_detector.py`):**
+- Add: `LoopPattern(pattern_type, fingerprints, count, description)` NamedTuple.
+- Add: `detect(fps, straight_threshold=3, oscillation_min=4)` — detects straight loops (same FP N+ times in a row) and A-B oscillations (two FPs strictly alternating over M+ iterations).
+- Add: `describe(patterns)` — compact multi-line summary for CLI display.
+- Integrated into `romyq health` via `detect_stuck_conditions(memory_path=...)` and into `romyq explain` "Planner Loop Detection" section.
+
+**Failure-Aware Planning:**
+- Add: `planning.build_memory_context(memory_path)` — builds a "Top Failed Tasks" prompt section from execution memory for injection into DeepSeek planning calls. Tasks that have failed repeatedly are listed with their last failure reason so the planner avoids proposing them again.
+- Update: `build_planning_context()` accepts `memory_path` parameter and injects memory context between repository context and recent-failures sections.
+- Update: `manager.generate_task()` passes `memory_path` to `build_planning_context()`.
+- Update: After task generation in `loop.py`, prior outcomes for the generated task are looked up in memory. If found, the failure context is appended to the task prompt sent to Claude so the executor is also aware of prior failures.
+- Update: After each task execution, `memory.record()` and `memory.update_mission()` are called. Wrapped in `try/except` so memory writes never crash the loop.
+
+**New CLI Commands:**
+- Add: `romyq planning [--json]` — shows current planning context (repository memory summary, injected failure context, blocked task state), planner loop detection results, and repeated-task warnings.
+- Add: `romyq memory [--json]` — shows execution memory analysis: total entries, success rate, retry rate, average attempts per task, top failed tasks (with FP and last reason), planner loop detection, and mission outcome summary.
+
+**Updated CLI Commands:**
+- Update: `romyq explain` — adds "Planner Loop Detection" section after Recovery Guidance.
+- Update: `romyq health` — passes `memory_path` to `detect_stuck_conditions()` so loop patterns are included in health warnings.
+- Update: `romyq stats [--json]` — passes `memory_path` to `compute()`; displays memory-derived fields (retry rate, avg attempts/task, blocked-task rate, planner loop count) when non-zero.
+- Update: `romyq/store.py` — adds `memory_path(workspace)` returning `.romyq/memory.json` path.
+
+**Metrics Expansion (`romyq/metrics.py`):**
+- Add: `LoopMetrics.task_retry_rate` — fraction of unique task FPs retried ≥1 time (from memory).
+- Add: `LoopMetrics.avg_attempts_per_task` — average execution attempts per unique task FP (from memory).
+- Add: `LoopMetrics.blocked_task_rate` — blocked events / history entries (from events + history).
+- Add: `LoopMetrics.planner_loop_count` — count of detected loop patterns in recent memory (from loop_detector).
+- All new fields have defaults (0.0/0) and are populated only when `memory_path` is provided; backward compatible.
+
+**Testing:**
+- Add: `tests/test_fingerprint.py` — 37 tests for normalize, fingerprint, similarity, is_similar, _tokens.
+- Add: `tests/test_memory.py` — 51 tests for all memory module functions including persistence, bounded growth, pruning, atomicity, mission tracking, and query functions.
+- Add: `tests/test_loop_detector.py` — 27 tests for straight loop and oscillation detection, edge cases, and describe().
+- Add: `tests/test_memory_cli.py` — 24 tests for `romyq planning` and `romyq memory` CLI commands (human and JSON output).
+- Tests: 359 → 511 (+152).
+
 ## 0.4.0
 
 **Long-running autonomous execution — safe for multi-day unattended operation:**

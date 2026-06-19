@@ -16,11 +16,30 @@ _SUCCESS_DROUGHT_THRESHOLD_S = 7200       # 2 hours
 _EVIDENCE_REPEAT_MIN_COUNT = 3            # same evidence seen this many times = stuck
 
 
+def detect_planner_loops(
+    memory_path: str,
+    straight_threshold: int = 3,
+    oscillation_min: int = 4,
+    history_limit: int = 30,
+) -> list[str]:
+    """Detect planner cycling patterns using execution memory.
+
+    Returns a list of human-readable warning strings.
+    """
+    from . import memory as mem_mod
+    from .loop_detector import detect
+
+    fps = mem_mod.recent_fingerprints(memory_path, limit=history_limit)
+    patterns = detect(fps, straight_threshold=straight_threshold, oscillation_min=oscillation_min)
+    return [p.description for p in patterns]
+
+
 def detect_stuck_conditions(
     state: dict,
     history_path: str,
     events_path: str,
     heartbeat_age_s: int | None = None,
+    memory_path: str = "",
 ) -> list[str]:
     """Return a list of warning strings describing stuck conditions.
 
@@ -110,5 +129,10 @@ def detect_stuck_conditions(
         warnings.append(
             f"Rate-limit hit {recent_rate_limits} times in the last 50 events — possible token exhaustion."
         )
+
+    # ── 6. Planner loop detection (from execution memory) ─────────────────────
+    if memory_path:
+        loop_warnings = detect_planner_loops(memory_path)
+        warnings.extend(loop_warnings)
 
     return warnings
