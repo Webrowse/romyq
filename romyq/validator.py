@@ -107,6 +107,23 @@ def _selective_restore(workspace: str, pre_dirty_paths: frozenset) -> None:
                     shutil.rmtree(path, ignore_errors=True)
 
 
+def rollback(
+    workspace: str,
+    pre_dirty: bool = False,
+    pre_dirty_paths: frozenset = frozenset(),
+) -> None:
+    """Restore the workspace after a cancellation or interrupted execution.
+
+    Mirrors the restore logic inside validate() so callers that exit before
+    reaching the validator (e.g. ClaudeCancelledError handlers) still leave
+    the working tree in a known-clean state.
+    """
+    if pre_dirty:
+        _selective_restore(workspace, pre_dirty_paths)
+    else:
+        _restore(workspace)
+
+
 def _claude_completed(stdout: str) -> bool:
     return bool(_COMPLETED_RE.search(stdout))
 

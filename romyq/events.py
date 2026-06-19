@@ -7,6 +7,8 @@ cannot break the main loop.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
@@ -64,6 +66,36 @@ def tail(path: str, n: int = 50) -> list[dict]:
         return result
     except FileNotFoundError:
         return []
+
+
+def prune(path: str, max_entries: int = 10_000) -> int:
+    """Remove oldest events so the log holds at most max_entries lines.
+
+    Uses an atomic tmp-file write so the log is never left partially written.
+    Returns the number of lines removed.  Returns 0 if the file is absent or
+    already within the limit.  Never raises.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if len(lines) <= max_entries:
+            return 0
+        to_keep = lines[-max_entries:]
+        removed = len(lines) - len(to_keep)
+        dir_ = os.path.dirname(os.path.abspath(path))
+        with tempfile.NamedTemporaryFile(
+            "w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8"
+        ) as f:
+            f.writelines(to_keep)
+            f.flush()
+            os.fsync(f.fileno())
+            tmp = f.name
+        os.replace(tmp, path)
+        return removed
+    except FileNotFoundError:
+        return 0
+    except Exception:
+        return 0
 
 
 def count_by_type(path: str) -> dict[str, int]:

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import os
+import signal
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 
 from . import activity, manager, notes, store, workspace as ws
 from .cancel import CancellationToken
-from .events import emit
+from .events import emit, prune as prune_events
 from . import events as ev
 from .findings import add_finding, extract_from_output
 from .history import add_entry
@@ -40,7 +42,7 @@ from .state import (
     set_phase,
     set_rate_limited,
 )
-from .validator import FAILURE, NO_ACTION_REQUIRED, SUCCESS, validate
+from .validator import FAILURE, NO_ACTION_REQUIRED, SUCCESS, rollback, validate
 
 
 # ── failure thresholds ────────────────────────────────────────────────────────
@@ -98,18 +100,24 @@ def _write_state_md(
     evidence_section = ""
     if evidence:
         evidence_section = "\n## Validation Evidence\n\n" + "\n".join(evidence[:50]) + "\n"
-    with open(path, "w") as f:
-        f.write(
-            f"# Current State\n\n"
-            f"## Last Task\n\n{task}\n\n"
-            f"## Last Commit\n\n{repo['latest_commit']}\n\n"
-            f"## Validation\n\nSuccess: {ok}\n\nReason: {reason}\n"
-            f"{evidence_section}"
-            f"\n## Git Status\n\n{repo['git_status']}\n\n"
-            f"## Repository Changes\n\n{repo['diff_stat']}\n\n"
-            f"## Claude Output\n\n{stdout}\n\n"
-            f"## Claude Errors\n\n{stderr}\n"
-        )
+    content = (
+        f"# Current State\n\n"
+        f"## Last Task\n\n{task}\n\n"
+        f"## Last Commit\n\n{repo['latest_commit']}\n\n"
+        f"## Validation\n\nSuccess: {ok}\n\nReason: {reason}\n"
+        f"{evidence_section}"
+        f"\n## Git Status\n\n{repo['git_status']}\n\n"
+        f"## Repository Changes\n\n{repo['diff_stat']}\n\n"
+        f"## Claude Output\n\n{stdout}\n\n"
+        f"## Claude Errors\n\n{stderr}\n"
+    )
+    dir_ = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+        tmp = f.name
+    os.replace(tmp, path)
 
 
 # ── main loop ─────────────────────────────────────────────────────────────────
@@ -137,7 +145,25 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     # Single CancellationToken for the entire session.
     cancel_token = CancellationToken(s_path)
 
+    # ── signal handling ───────────────────────────────────────────────────────
+    # On SIGTERM/SIGINT, set stop_requested so the cancel_token fires on the
+    # next poll.  This ensures Claude is terminated, the workspace is rolled
+    # back, and a LOOP_STOPPED event is written before exit.
+    def _handle_signal(signum: int, frame: object) -> None:
+        activity.log(f"Signal {signum} received — requesting stop.")
+        try:
+            state = load_state(s_path)
+            state["stop_requested"] = True
+            save_state(state, s_path)
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
     emit(e_path, ev.LOOP_STARTED, timeout_s=timeout_s)
+    _max_events = int(os.getenv("ROMYQ_MAX_EVENTS", "10000"))
+    prune_events(e_path, max_entries=_max_events)
 
     def _heartbeat_cb(elapsed: int) -> None:
         remaining = max(0, timeout_s - elapsed)
@@ -339,10 +365,10 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             )
 
         except ClaudeCancelledError:
-            # Stop was requested while Claude was running; exit cleanly.
-            cancelled = True
             activity.log("Claude cancelled by stop request.")
             emit(e_path, ev.CLAUDE_CANCELLED)
+            rollback(workspace_path, pre_dirty=pre_dirty, pre_dirty_paths=pre_dirty_paths)
+            activity.log("Workspace restored after cancellation.")
             emit(e_path, ev.LOOP_STOPPED, reason="cancelled_during_execution")
             state = load_state(s_path)
             mark_stopped(state)
@@ -503,7 +529,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         else:
             # Normal failure
-            persistent_consec = record_task_failure(state, key, reason) or state.get("consecutive_failures", 0)
+            record_task_failure(state, key, reason)
 
             if key == last_failed_key:
                 same_task_streak += 1
@@ -550,4 +576,11 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         activity.log(f"State saved. Tasks completed: {state['tasks_completed']}")
 
         activity.log("Waiting 10s before next task...")
-        time.sleep(10)
+        if cancel_token.wait(10):
+            activity.log("Stop requested during inter-task sleep — exiting.")
+            emit(e_path, ev.LOOP_STOPPED, reason="stop_during_inter_task_sleep")
+            state = load_state(s_path)
+            mark_stopped(state)
+            set_phase(state, RunState.STOPPED)
+            save_state(state, s_path)
+            break

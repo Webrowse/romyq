@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0
+
+**Durability and recovery hardening:**
+
+- Fix: All JSON write paths (`state.json`, `findings.json`, `history.json`) now call `f.flush()` + `os.fsync()` inside the `NamedTemporaryFile` context before `os.replace()`. Without fsync, a power failure between file-close and `os.replace()` could leave an empty or partial temp file, causing the loop to silently reset all persistent counters on restart.
+- Fix: `_write_state_md()` is now atomic (tmp + fsync + os.replace). Previously a crash during write left a partial Markdown file.
+- Fix: `events.prune()` uses atomic tmp + fsync + os.replace when rewriting the log.
+- Fix: Workspace is now rolled back after `ClaudeCancelledError`. Previously, stopping the loop while Claude was editing files left the working tree in an unknown dirty state; the next run would immediately fail validation. `rollback()` is now called in the cancellation handler before exiting.
+- Fix: Inter-task sleep now uses `cancel_token.wait(10)` instead of `time.sleep(10)`. A stop request during the 10-second gap is now honoured within POLL_INTERVAL (5 s) rather than up to 10 s later.
+- Fix: SIGTERM and SIGINT now set `stop_requested` in `state.json` so the cancel token fires on the next poll, Claude is terminated, the workspace is rolled back, and a `LOOP_STOPPED` event is written before exit.
+- Fix: Removed dead code in the normal-failure path (`persistent_consec = record_task_failure(...) or ...`; `record_task_failure` returns None and the variable was never used).
+
+**New observability features:**
+
+- Add: `romyq explain` — single command showing the full diagnostic picture: loop state, phase, heartbeat, current task (full text), task key, attempt count vs ceiling (with BLOCKED label), consecutive failures, last failure reason, last failure timestamp, and all validator evidence lines.
+- Add: `romyq status --json` — machine-readable JSON output of the complete `state.json` for scripting, monitoring, and CI integration.
+- Add: `events.prune(path, max_entries)` — removes oldest events to cap the log at `max_entries` lines. Called automatically at loop startup with `ROMYQ_MAX_EVENTS` (default 10 000).
+- Add: `validator.rollback(workspace, pre_dirty, pre_dirty_paths)` — public function wrapping the selective/full restore logic, usable from any code that exits before reaching the validator.
+
+**Testing:**
+
+- Add: `tests/test_atomic_writes.py` — 20 tests verifying fsync + os.replace across state, findings, history, and events.prune().
+- Add: `tests/test_rollback.py` — 11 tests for the public `rollback()` function including pre-dirty preservation and nested directories.
+- Add: `tests/test_explain_cmd.py` — 11 tests for `romyq explain` and `romyq status --json`.
+- Add: `tests/test_smoke.py` — real-subprocess tests for `_terminate()`, timeout, and CancellationToken cancellation; optional claude-binary tests guarded with `@pytest.mark.smoke`.
+- Tests: 193 → 244 (+51).
+
 ## 0.2.0
 
 **Reliability hardening — safe to run unattended for 8–12 hours:**

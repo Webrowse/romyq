@@ -248,6 +248,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 # ── status ────────────────────────────────────────────────────────────────────
 
 def cmd_status(args: argparse.Namespace) -> None:
+    import json as _json
     from dotenv import load_dotenv
     load_dotenv()
     workspace_path = _resolve_workspace(args)
@@ -263,6 +264,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     except Exception:
         print("No state found. Has romyq been run yet?")
         sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(_json.dumps(state, indent=2))
+        return
 
     W = 18
 
@@ -292,6 +297,84 @@ def cmd_status(args: argparse.Namespace) -> None:
     if state["current_task"]:
         task_preview = state["current_task"][:120].replace("\n", " ")
         row("Current task:", task_preview + "...")
+
+
+# ── explain ───────────────────────────────────────────────────────────────────
+
+def cmd_explain(args: argparse.Namespace) -> None:
+    """Show the full diagnostic picture for the current loop state."""
+    from dotenv import load_dotenv
+    load_dotenv()
+    workspace_path = _resolve_workspace(args)
+
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    try:
+        state = load_state(store.state_path(workspace_path))
+    except Exception:
+        print("No state found. Has romyq been run yet?")
+        sys.exit(1)
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq explain: {Path(workspace_path).resolve()}")
+
+    section("Loop State")
+    W = 20
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    row("status", state.get("status", "unknown"))
+    row("phase", state.get("phase", "idle"))
+    row("heartbeat", state.get("heartbeat") or "(none)")
+    row("tasks completed", str(state.get("tasks_completed", 0)))
+    row("last commit", state.get("last_commit") or "(none)")
+
+    if state.get("paused"):
+        row("paused", "yes — run 'romyq resume' to continue")
+    if state.get("stop_requested"):
+        row("stop requested", "yes — loop will exit after current task")
+    if state.get("resume_at"):
+        row("rate limited", f"resumes at {state['resume_at']}")
+
+    section("Current Task")
+    task = state.get("current_task", "")
+    if task:
+        for line in task.splitlines():
+            print(f"  {line}")
+    else:
+        print("  (none)")
+
+    section("Failure Tracking")
+    attempts = state.get("current_task_attempts", 0)
+    ceiling = state.get("max_task_attempts", 3)
+    consec = state.get("consecutive_failures", 0)
+    task_key = state.get("current_task_key", "")
+    row("task key", task_key or "(none)")
+    row("attempts", f"{attempts} / {ceiling}" + (" — BLOCKED" if attempts >= ceiling and task_key else ""))
+    row("consecutive failures", str(consec))
+    if state.get("last_failure_reason"):
+        row("last failure reason", state["last_failure_reason"])
+    if state.get("last_failure_timestamp"):
+        row("last failure at", state["last_failure_timestamp"])
+
+    section("Last Validation Evidence")
+    evidence = state.get("last_validation_evidence", [])
+    if evidence:
+        for line in evidence:
+            print(f"  {line}")
+    else:
+        print("  (none recorded)")
+
+    print()
 
 
 # ── logs ──────────────────────────────────────────────────────────────────────
@@ -815,6 +898,12 @@ def main() -> None:
         default=None,
         help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
     )
+    p_status.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output state as JSON",
+    )
     p_status.set_defaults(func=cmd_status)
 
     p_logs = sub.add_parser("logs", help="Show recent task history")
@@ -881,6 +970,15 @@ def main() -> None:
         help="Number of entries to show (default: 30)",
     )
     p_events.set_defaults(func=cmd_events)
+
+    p_explain = sub.add_parser("explain", help="Show full diagnostic state, task, failures, and evidence")
+    p_explain.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_explain.set_defaults(func=cmd_explain)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

@@ -41,6 +41,8 @@ def _save(findings: list, path: str) -> None:
     dir_ = os.path.dirname(os.path.abspath(path))
     with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(findings, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
         tmp = f.name
     os.replace(tmp, path)
 
