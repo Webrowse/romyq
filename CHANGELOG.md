@@ -2,6 +2,12 @@
 
 ## 0.1.3 (unreleased)
 
+**Release-verification and reliability fixes:**
+
+- Fix: validator now returns a three-way outcome (`SUCCESS`, `FAILURE`, `NO_ACTION_REQUIRED`) — already-complete tasks advance without incrementing failure streaks or creating findings, and audit finding extraction is skipped for `NO_ACTION_REQUIRED`
+- Fix: `romyq version` now shows `executable` (absolute path of the running binary) and `venv` (active virtual environment path); warns when not running inside a venv
+- Fix: RELEASE.md and ALPHA_CHECKLIST.md now use isolated venv paths (`$TDIR/bin/romyq`) for all release verification steps, preventing PATH-shadowing by a global install from producing silent false positives
+
 **Production-readiness fixes (top 5 audit findings):**
 
 - Fix: state write-after-read race condition — `refresh_control_flags()` re-reads `paused` and `stop_requested` from disk immediately before every `save_state()` call; CLI pause/stop/resume commands are no longer silently discarded during Claude execution

@@ -113,6 +113,15 @@ Screen {
     color: $error;
 }
 
+#status-badge.rate-limited {
+    color: $warning;
+    text-style: bold;
+}
+
+#status-badge.paused {
+    color: $text-muted;
+}
+
 /* ── main split ── */
 #main {
     height: 1fr;
@@ -284,10 +293,33 @@ class RomyqDashboard(App):
     def _refresh_status_bar(self, state: dict) -> None:
         status = state.get("status", "unknown")
         badge = self.query_one("#status-badge", Label)
-        badge.update(f"● {status}")
-        badge.remove_class("completed", "stale")
-        if status == "completed":
+        badge.remove_class("completed", "stale", "rate-limited", "paused")
+
+        if status == "rate_limited":
+            resume_at = state.get("resume_at", "")
+            if resume_at:
+                try:
+                    resume_dt = datetime.fromisoformat(resume_at)
+                    secs = max(0, int((resume_dt - datetime.now(timezone.utc)).total_seconds()))
+                    mins, sec = divmod(secs, 60)
+                    countdown = f"{mins}m{sec:02d}s" if mins > 0 else f"{secs}s"
+                except Exception:
+                    countdown = "soon"
+            else:
+                countdown = "soon"
+            badge.update(f"● RATE LIMITED — resumes in {countdown}")
+            badge.add_class("rate-limited")
+        elif status == "paused":
+            badge.update("● PAUSED")
+            badge.add_class("paused")
+        elif status == "completed":
+            badge.update(f"● {status}")
             badge.add_class("completed")
+        elif status == "stopped":
+            badge.update(f"● {status}")
+            badge.add_class("stale")
+        else:
+            badge.update(f"● {status}")
 
         hb = state.get("heartbeat", "")
         age_str = _age(hb)

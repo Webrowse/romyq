@@ -8,7 +8,7 @@ from . import __version__, notes as notes_mod, store
 from .findings import unresolved as findings_unresolved
 from .mission import create_template, exists as mission_exists, load as load_mission
 from .workspace import bootstrap, is_git_repo, _ensure_gitignore_entry, detect, git_log
-from .state import load as load_state
+from .state import load as load_state, save as save_state
 from .history import recent
 
 
@@ -558,12 +558,67 @@ def cmd_ui(args: argparse.Namespace) -> None:
     launch(workspace_path)
 
 
+# ── pause / resume / stop ─────────────────────────────────────────────────────
+
+def cmd_pause(args: argparse.Namespace) -> None:
+    workspace_path = _resolve_workspace(args)
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+    s_path = store.state_path(workspace_path)
+    state = load_state(s_path)
+    if state.get("paused"):
+        print("Already paused.")
+        return
+    state["paused"] = True
+    save_state(state, s_path)
+    print("Paused. Romyq will idle after the current task completes.")
+    print("Resume with: romyq resume")
+
+
+def cmd_resume(args: argparse.Namespace) -> None:
+    workspace_path = _resolve_workspace(args)
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+    s_path = store.state_path(workspace_path)
+    state = load_state(s_path)
+    if not state.get("paused"):
+        print("Not paused.")
+        return
+    state["paused"] = False
+    save_state(state, s_path)
+    print("Resumed. Romyq will continue on the next loop iteration.")
+
+
+def cmd_stop(args: argparse.Namespace) -> None:
+    workspace_path = _resolve_workspace(args)
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+    s_path = store.state_path(workspace_path)
+    state = load_state(s_path)
+    if state.get("stop_requested"):
+        print("Stop already requested.")
+        return
+    state["stop_requested"] = True
+    save_state(state, s_path)
+    print("Stop requested. Romyq will exit after the current task completes.")
+    print("(If rate-limited and sleeping, it will wake early to honour the stop.)")
+
+
 # ── version ───────────────────────────────────────────────────────────────────
 
 def cmd_version(args: argparse.Namespace) -> None:
     import json
+    import os
     import sys
     from importlib.metadata import PackageNotFoundError, distribution
+
+    W = 12  # label column width
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
 
     print(f"romyq {__version__}")
 
@@ -574,24 +629,43 @@ def cmd_version(args: argparse.Namespace) -> None:
             data = json.loads(direct_url_text)
             if data.get("dir_info", {}).get("editable"):
                 src = data.get("url", "").removeprefix("file://")
-                print(f"  install  editable ({src})")
-                print("  note     run 'pip install -e .' after bumping pyproject.toml version")
+                row("install", f"editable ({src})")
+                row("note", "run 'pip install -e .' after bumping pyproject.toml version")
             else:
-                print("  install  wheel or sdist")
+                row("install", "wheel or sdist")
         else:
             # Old-style egg-info editable (no direct_url.json)
             dist_path = str(getattr(dist, "_path", ""))
             if "egg-info" in dist_path or "egg-link" in dist_path:
-                print("  install  editable (legacy egg-info — re-run 'pip install -e .' after version bumps)")
+                row("install", "editable (legacy egg-info — re-run 'pip install -e .' after version bumps)")
             else:
-                print("  install  wheel or sdist")
+                row("install", "wheel or sdist")
     except PackageNotFoundError:
-        print("  install  none — package not installed via pip (version above is a fallback)")
+        row("install", "none — package not installed via pip (version above is a fallback)")
 
     if __version__ == "0.0.0+unknown":
-        print("  warning  version unknown — install with 'pip install -e .' or 'pip install romyq'")
+        row("warning", "version unknown — install with 'pip install -e .' or 'pip install romyq'")
 
-    print(f"  python   {sys.version.split()[0]}")
+    row("python", sys.version.split()[0])
+
+    # Executable path — shows which binary is actually running.
+    # Critical for catching PATH-shadowing by a global install.
+    exe = os.path.realpath(sys.argv[0])
+    row("executable", exe)
+
+    # Venv detection: VIRTUAL_ENV env var (set by venv/virtualenv on activation)
+    # falls back to comparing sys.prefix with sys.base_prefix.
+    virtual_env = os.environ.get("VIRTUAL_ENV", "")
+    if virtual_env:
+        row("venv", virtual_env)
+    elif hasattr(sys, "real_prefix") or sys.prefix != sys.base_prefix:
+        row("venv", sys.prefix)
+    else:
+        row("venv", "none")
+        print()
+        print("  Warning: not running inside a virtual environment.")
+        print("           If you are testing a wheel install, activate the venv first.")
+        print("           Quick check: python -m pip show romyq")
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -718,6 +792,33 @@ def main() -> None:
 
     p_version = sub.add_parser("version", help="Show version and install information")
     p_version.set_defaults(func=cmd_version)
+
+    p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
+    p_pause.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_pause.set_defaults(func=cmd_pause)
+
+    p_resume = sub.add_parser("resume", help="Resume a paused loop")
+    p_resume.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_resume.set_defaults(func=cmd_resume)
+
+    p_stop = sub.add_parser("stop", help="Request graceful shutdown after the current task")
+    p_stop.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_stop.set_defaults(func=cmd_stop)
 
     args = parser.parse_args()
     args.func(args)

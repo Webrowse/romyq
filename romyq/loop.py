@@ -31,7 +31,7 @@ from .state import (
     set_last_commit,
     set_rate_limited,
 )
-from .validator import validate
+from .validator import FAILURE, NO_ACTION_REQUIRED, SUCCESS, validate
 
 
 # ── failure thresholds ────────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         after_commit = repo_after["latest_commit"]
 
         activity.log("Validating...")
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=workspace_path,
             before_commit=before_commit,
             after_commit=after_commit,
@@ -369,18 +369,20 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             pre_dirty_paths=pre_dirty_paths,
         )
 
-        if not ok and timed_out:
+        if outcome == FAILURE and timed_out:
             reason = f"Claude timed out after {elapsed}s ({timeout_s}s limit)"
 
-        if ok:
+        if outcome == SUCCESS:
             activity.log("Validation passed.")
+        elif outcome == NO_ACTION_REQUIRED:
+            activity.log(f"Task already complete — no action required.")
         else:
             activity.log(f"Validation failed — {reason}")
 
         add_entry(
             task=task,
             mode=mode,
-            success=ok,
+            success=(outcome != FAILURE),
             commit=after_commit,
             validation_reason=reason,
             path=h_path,
@@ -389,7 +391,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         set_last_commit(state, after_commit)
 
         # ── failure tracking ──────────────────────────────────────────────────
-        if ok:
+        if outcome != FAILURE:
             if in_diagnosis:
                 activity.log("Diagnosis task succeeded — resuming normal operation.")
             same_task_streak = 0
@@ -402,9 +404,12 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
             if mode == "audit":
                 mark_audit_complete(state)
-                n = extract_from_output(result.stdout, mode, path=f_path)
-                if n:
-                    activity.log(f"Audit saved {n} finding(s).")
+                # Only extract findings from stdout when Claude actually committed
+                # work; NO_ACTION_REQUIRED means the audit found nothing to do.
+                if outcome == SUCCESS:
+                    n = extract_from_output(result.stdout, mode, path=f_path)
+                    if n:
+                        activity.log(f"Audit saved {n} finding(s).")
 
         elif in_diagnosis:
             diagnosis_failures += 1
@@ -469,7 +474,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         # otherwise be silently overwritten by the stale in-memory dict.
         refresh_control_flags(state, s_path)
         save_state(state, s_path)
-        _write_state_md(md_path, task, result.stdout, result.stderr, repo_after, ok, reason)
+        _write_state_md(md_path, task, result.stdout, result.stderr, repo_after, outcome != FAILURE, reason)
         activity.log(f"State saved. Tasks completed: {state['tasks_completed']}")
 
         activity.log("Waiting 10s before next task...")

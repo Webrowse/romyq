@@ -2,11 +2,17 @@
 
 Finding 2: Validator false-fails already-complete tasks.
   Claude may correctly determine a task is already done and print COMPLETED
-  without creating a new commit.  The validator must recognise this as success.
+  without creating a new commit.  The validator must recognise this as
+  NO_ACTION_REQUIRED, not FAILURE.
 
 Finding 3: Dirty repository state compounds across failures.
-  When pre-existing uncommitted changes exist, the validator must only clean up
-  files Claude added/modified, leaving the user's changes intact.
+  When pre-existing uncommitted changes exist, the validator must only clean
+  up files Claude added/modified, leaving the user's changes intact.
+
+Three-way outcome contract:
+  SUCCESS            — Claude committed work; repo is clean.
+  NO_ACTION_REQUIRED — Task already satisfied; no commit needed; advance normally.
+  FAILURE            — Something went wrong; workspace restored.
 """
 from __future__ import annotations
 
@@ -16,7 +22,12 @@ from pathlib import Path
 
 import pytest
 
-from romyq.validator import validate
+from romyq.validator import (
+    FAILURE,
+    NO_ACTION_REQUIRED,
+    SUCCESS,
+    validate,
+)
 
 
 # ── git repo fixture ──────────────────────────────────────────────────────────
@@ -61,69 +72,89 @@ def _make_commit(repo: Path, filename: str = "change.txt", msg: str = "feat: add
     return _head(repo)
 
 
+# ── outcome constants ─────────────────────────────────────────────────────────
+
+class TestOutcomeConstants:
+
+    def test_all_three_constants_are_distinct(self):
+        assert SUCCESS != FAILURE
+        assert SUCCESS != NO_ACTION_REQUIRED
+        assert FAILURE != NO_ACTION_REQUIRED
+
+    def test_constants_are_strings(self):
+        assert isinstance(SUCCESS, str)
+        assert isinstance(FAILURE, str)
+        assert isinstance(NO_ACTION_REQUIRED, str)
+
+    def test_success_is_truthy_and_failure_is_truthy(self):
+        """All constants are non-empty strings; check with identity, not truthiness."""
+        assert SUCCESS
+        assert FAILURE
+        assert NO_ACTION_REQUIRED
+
+
 # ── Finding 2: already-complete task detection ────────────────────────────────
 
 class TestAlreadyCompleteDetection:
 
-    def test_completed_marker_no_new_commit_is_success(self, git_repo):
-        """COMPLETED + returncode 0 + clean tree + same commit → success."""
+    def test_completed_marker_no_new_commit_is_no_action_required(self, git_repo):
+        """COMPLETED + returncode 0 + clean tree + same commit → NO_ACTION_REQUIRED."""
         commit = _head(git_repo)
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=0,
             stdout="I see this feature is already implemented.\nCOMPLETED\n",
         )
-        assert ok is True
+        assert outcome == NO_ACTION_REQUIRED
         assert "already complete" in reason.lower()
 
-    def test_completed_marker_with_new_commit_uses_normal_path(self, git_repo):
-        """When a new commit IS created, normal validation path is used."""
+    def test_completed_marker_with_new_commit_is_success(self, git_repo):
+        """When a new commit IS created, outcome is SUCCESS (normal path)."""
         before = _head(git_repo)
         after = _make_commit(git_repo)
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=before,
             after_commit=after,
             returncode=0,
             stdout="COMPLETED",
         )
-        assert ok is True
+        assert outcome == SUCCESS
         assert reason == "Validation passed"
 
     def test_no_completed_marker_same_commit_is_failure(self, git_repo):
-        """Without COMPLETED marker, same commit is still a failure."""
+        """Without COMPLETED marker, same commit → FAILURE."""
         commit = _head(git_repo)
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=0,
             stdout="Did some work but forgot to commit.",
         )
-        assert ok is False
+        assert outcome == FAILURE
         assert "no new commit" in reason.lower()
 
     def test_completed_but_nonzero_returncode_is_failure(self, git_repo):
-        """returncode != 0 always fails, even with COMPLETED in stdout."""
+        """returncode != 0 always → FAILURE, even with COMPLETED in stdout."""
         commit = _head(git_repo)
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=1,
             stdout="COMPLETED",
         )
-        assert ok is False
+        assert outcome == FAILURE
         assert "non-zero" in reason.lower()
 
     def test_completed_but_new_dirty_files_is_failure(self, git_repo):
-        """COMPLETED + new dirty files Claude left behind → failure (not done)."""
+        """COMPLETED + new dirty files Claude left behind → FAILURE."""
         commit = _head(git_repo)
-        # Claude created a file but didn't commit it
         (git_repo / "new_file.txt").write_text("unfinished")
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -132,18 +163,16 @@ class TestAlreadyCompleteDetection:
             pre_dirty=False,
             pre_dirty_paths=frozenset(),
         )
-        assert ok is False
-        # New untracked file should be cleaned up
+        assert outcome == FAILURE
         assert not (git_repo / "new_file.txt").exists()
 
-    def test_completed_with_only_preexisting_dirty_files_is_success(self, git_repo):
-        """COMPLETED + only pre-existing dirty files remaining → success."""
-        # User has a pre-existing modification
+    def test_completed_with_only_preexisting_dirty_files_is_no_action_required(self, git_repo):
+        """COMPLETED + only pre-existing dirty files remaining → NO_ACTION_REQUIRED."""
         (git_repo / "user_work.txt").write_text("user's changes")
         commit = _head(git_repo)
         pre_dirty_paths = frozenset(["user_work.txt"])
 
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -152,29 +181,26 @@ class TestAlreadyCompleteDetection:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        assert ok is True
+        assert outcome == NO_ACTION_REQUIRED
         assert "already complete" in reason.lower()
-        # Pre-existing file preserved
         assert (git_repo / "user_work.txt").read_text() == "user's changes"
 
     def test_completed_uppercase_only_matches(self, git_repo):
-        """COMPLETED must be uppercase (as specified in the engineer prompt)."""
+        """Lowercase 'completed' does NOT trigger NO_ACTION_REQUIRED."""
         commit = _head(git_repo)
-        # lowercase "completed" should NOT trigger the already-done path
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=0,
-            stdout="completed the task",  # lowercase — not the marker
+            stdout="completed the task",
         )
-        assert ok is False
+        assert outcome == FAILURE
 
     def test_regression_observed_infinite_loop_scenario(self, git_repo):
         """Regression: task already done → no commit → validator said FAIL → loop."""
         commit = _head(git_repo)
-        # Real scenario: Claude scans repo, feature exists, prints COMPLETED
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -186,7 +212,7 @@ class TestAlreadyCompleteDetection:
                 "COMPLETED\n"
             ),
         )
-        assert ok is True, f"Expected success but got: {reason}"
+        assert outcome == NO_ACTION_REQUIRED, f"Expected NO_ACTION_REQUIRED but got: {outcome}, reason: {reason}"
 
 
 # ── Finding 3: selective restore with pre-existing dirty state ────────────────
@@ -196,27 +222,24 @@ class TestSelectiveRestore:
     def test_cleans_claude_additions_on_failure(self, git_repo):
         """When Claude fails, its untracked files are cleaned up."""
         commit = _head(git_repo)
-        # Claude creates a new file but exits non-zero
         (git_repo / "claude_new_file.txt").write_text("incomplete work")
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=1,
         )
-        assert ok is False
+        assert outcome == FAILURE
         assert not (git_repo / "claude_new_file.txt").exists()
 
     def test_preserves_preexisting_untracked_file_on_failure(self, git_repo):
         """Pre-existing untracked file is left alone when Claude fails."""
-        # User has an untracked file
         (git_repo / "my_notes.txt").write_text("my notes")
         commit = _head(git_repo)
         pre_dirty_paths = frozenset(["my_notes.txt"])
 
-        # Claude also creates a file, then fails
         (git_repo / "claude_file.txt").write_text("claude's junk")
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -224,23 +247,18 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        assert ok is False
-        # Claude's file cleaned up
+        assert outcome == FAILURE
         assert not (git_repo / "claude_file.txt").exists()
-        # User's file preserved
-        assert (git_repo / "my_notes.txt").exists()
         assert (git_repo / "my_notes.txt").read_text() == "my notes"
 
     def test_preserves_preexisting_modified_tracked_file_on_failure(self, git_repo):
         """Pre-existing tracked modification is left alone when Claude fails."""
-        # User has modified a tracked file (tracked by git)
         (git_repo / "readme.txt").write_text("user modified this")
         commit = _head(git_repo)
         pre_dirty_paths = frozenset(["readme.txt"])
 
-        # Claude creates a new untracked file, then exits non-zero
         (git_repo / "claude_output.txt").write_text("failed output")
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -248,10 +266,8 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        assert ok is False
-        # Claude's file cleaned
+        assert outcome == FAILURE
         assert not (git_repo / "claude_output.txt").exists()
-        # User's modification preserved
         assert (git_repo / "readme.txt").read_text() == "user modified this"
 
     def test_cleans_multiple_claude_additions_on_failure(self, git_repo):
@@ -260,12 +276,11 @@ class TestSelectiveRestore:
         commit = _head(git_repo)
         pre_dirty_paths = frozenset(["user_draft.txt"])
 
-        # Claude creates several files
         (git_repo / "claude_a.txt").write_text("a")
         (git_repo / "claude_b.txt").write_text("b")
         (git_repo / "claude_c.txt").write_text("c")
 
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -273,7 +288,7 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        assert ok is False
+        assert outcome == FAILURE
         assert not (git_repo / "claude_a.txt").exists()
         assert not (git_repo / "claude_b.txt").exists()
         assert not (git_repo / "claude_c.txt").exists()
@@ -290,7 +305,6 @@ class TestSelectiveRestore:
         commit = _head(git_repo)
         pre_dirty_paths = frozenset(["user_file.txt"])
 
-        # Iteration 1: Claude creates a file, fails
         (git_repo / "iter1_file.txt").write_text("iteration 1 junk")
         validate(
             workspace=str(git_repo),
@@ -300,11 +314,9 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        # After iteration 1: Claude's file must be gone
         assert not (git_repo / "iter1_file.txt").exists()
         assert (git_repo / "user_file.txt").exists()
 
-        # Iteration 2: Claude creates another file, fails again
         (git_repo / "iter2_file.txt").write_text("iteration 2 junk")
         validate(
             workspace=str(git_repo),
@@ -314,18 +326,17 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        # After iteration 2: only user_file.txt should exist
         assert not (git_repo / "iter1_file.txt").exists()
         assert not (git_repo / "iter2_file.txt").exists()
         assert (git_repo / "user_file.txt").exists()
 
     def test_failure_message_mentions_preexisting_preservation(self, git_repo):
-        """Failure reason tells the user their changes are preserved."""
+        """FAILURE reason tells the user their changes are preserved."""
         commit = _head(git_repo)
         (git_repo / "user.txt").write_text("user")
         pre_dirty_paths = frozenset(["user.txt"])
 
-        ok, reason = validate(
+        outcome, reason = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
@@ -333,24 +344,66 @@ class TestSelectiveRestore:
             pre_dirty=True,
             pre_dirty_paths=pre_dirty_paths,
         )
-        assert ok is False
+        assert outcome == FAILURE
         assert "preserved" in reason.lower()
 
     def test_no_preexisting_changes_uses_full_restore(self, git_repo):
         """When pre_dirty=False, the full restore still works correctly."""
         commit = _head(git_repo)
-        # Claude modifies a tracked file and adds an untracked one, then fails
         (git_repo / "readme.txt").write_text("claude changed this")
         (git_repo / "new_from_claude.txt").write_text("new file")
 
-        ok, reason = validate(
+        outcome, _ = validate(
             workspace=str(git_repo),
             before_commit=commit,
             after_commit=commit,
             returncode=1,
             pre_dirty=False,
         )
-        assert ok is False
-        # Full restore: readme.txt restored, new file deleted
+        assert outcome == FAILURE
         assert (git_repo / "readme.txt").read_text() == "initial"
         assert not (git_repo / "new_from_claude.txt").exists()
+
+
+# ── SUCCESS path ──────────────────────────────────────────────────────────────
+
+class TestSuccessPath:
+
+    def test_new_commit_clean_tree_is_success(self, git_repo):
+        """New commit + clean tree → SUCCESS."""
+        before = _head(git_repo)
+        after = _make_commit(git_repo)
+        outcome, reason = validate(
+            workspace=str(git_repo),
+            before_commit=before,
+            after_commit=after,
+            returncode=0,
+        )
+        assert outcome == SUCCESS
+        assert reason == "Validation passed"
+
+    def test_new_commit_dirty_tree_is_failure(self, git_repo):
+        """New commit but dirty tree (Claude didn't stage everything) → FAILURE."""
+        before = _head(git_repo)
+        after = _make_commit(git_repo)
+        (git_repo / "unstaged.txt").write_text("oops")
+        outcome, reason = validate(
+            workspace=str(git_repo),
+            before_commit=before,
+            after_commit=after,
+            returncode=0,
+        )
+        assert outcome == FAILURE
+        assert "dirty" in reason.lower()
+
+    def test_nonzero_returncode_always_failure(self, git_repo):
+        """Non-zero returncode → FAILURE regardless of commit state."""
+        before = _head(git_repo)
+        after = _make_commit(git_repo)
+        outcome, _ = validate(
+            workspace=str(git_repo),
+            before_commit=before,
+            after_commit=after,
+            returncode=1,
+        )
+        assert outcome == FAILURE

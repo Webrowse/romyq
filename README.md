@@ -64,6 +64,9 @@ That's it. Romyq takes over from here.
 |---|---|
 | `romyq run` | Start the autonomous development loop |
 | `romyq note "message"` | Inject a steering note into the next task |
+| `romyq pause` | Pause the loop after the current task finishes |
+| `romyq resume` | Resume a paused loop |
+| `romyq stop` | Request graceful shutdown after the current task |
 
 **Observability**
 
@@ -169,6 +172,35 @@ romyq ui
 ```
 
 The dashboard polls state files every 2 seconds. No changes to the running loop are required.
+
+---
+
+## Rate Limit Handling
+
+When Claude hits a session or usage limit, Romyq detects it automatically instead of treating it as a task failure:
+
+- Parses the reset time from Claude's output (e.g. `resets 5:50am (Asia/Calcutta)`)
+- Logs the reset time and timezone
+- Sets `status: rate_limited` in state (visible in `romyq ui` and `romyq status`)
+- Sleeps until the reset time plus a 5-minute safety buffer
+- Retries the same task — no new DeepSeek call is wasted
+- Falls back to a 30-minute sleep if the reset time cannot be parsed
+
+The loop can be stopped early during a rate-limit sleep with `romyq stop`.
+
+---
+
+## Loop Control
+
+Run these from any terminal while `romyq run` is active in another:
+
+```bash
+romyq pause    # idle after current task (loop keeps running)
+romyq resume   # resume a paused loop
+romyq stop     # exit gracefully after current task (or wake from rate-limit sleep)
+```
+
+These commands write flags to `.romyq/state.json`. The loop reads them between tasks.
 
 ---
 

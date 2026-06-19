@@ -37,22 +37,30 @@ The workflow runs automatically. Monitor it at:
 
 ### Version verification
 
-After the workflow completes:
+> **Do not use bare `romyq` commands for release verification.** A global
+> install of romyq may shadow the venv executable and silently produce a
+> false positive. Use the isolated venv procedure below instead.
 
 ```bash
-pip install romyq==0.2.0 --force-reinstall
-romyq --version        # must print: romyq 0.2.0
-romyq version          # must show: wheel or sdist (not editable)
-python -m romyq --version
+RELEASE_VER=0.2.0
+TDIR=/tmp/romyq-release-test
+
+python -m venv "$TDIR"
+"$TDIR/bin/pip" install "romyq==$RELEASE_VER"
+"$TDIR/bin/romyq" --version         # must print: romyq $RELEASE_VER
+"$TDIR/bin/romyq" version           # install must show: wheel or sdist
+"$TDIR/bin/pip"   show romyq        # Name: romyq, Version: $RELEASE_VER
+"$TDIR/bin/romyq" doctor
+rm -rf "$TDIR"
 ```
 
 If you are on an editable install during development, verify the version is not stale:
 
 ```bash
-romyq version          # check "install" line
+romyq version          # check "install" and "executable" lines
 # if it shows legacy egg-info, re-run:
 pip install -e .
-romyq --version
+romyq version
 ```
 
 ---
@@ -101,12 +109,20 @@ dist/romyq-0.2.0-py3-none-any.whl
 
 ### 3. Test the build locally
 
+> **Use absolute venv paths** — a global `romyq` in PATH may shadow the one
+> you just installed and produce a silent false positive.
+
 ```bash
-pip install dist/romyq-0.2.0-py3-none-any.whl --force-reinstall
-romyq --version        # must print: romyq 0.2.0
-romyq version          # must show: wheel or sdist (not editable)
-python -m romyq --version
-romyq doctor
+RELEASE_VER=0.2.0
+TDIR=/tmp/romyq-release-test
+
+python -m venv "$TDIR"
+"$TDIR/bin/pip" install "dist/romyq-${RELEASE_VER}-py3-none-any.whl"
+"$TDIR/bin/romyq" --version         # must print: romyq $RELEASE_VER
+"$TDIR/bin/romyq" version           # install must show: wheel or sdist
+"$TDIR/bin/pip"   show romyq        # must show Name: romyq, Version: $RELEASE_VER
+"$TDIR/bin/romyq" doctor
+rm -rf "$TDIR"
 ```
 
 ### 4. Publish to TestPyPI (optional but recommended)
@@ -115,12 +131,21 @@ romyq doctor
 twine upload --repository testpypi dist/*
 ```
 
-Install from TestPyPI to verify:
+Install from TestPyPI to verify (using isolated venv to avoid PATH shadowing):
 
 ```bash
-pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ romyq==0.2.0
-romyq --version
-romyq doctor
+RELEASE_VER=0.2.0
+TDIR=/tmp/romyq-testpypi-test
+
+python -m venv "$TDIR"
+"$TDIR/bin/pip" install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  "romyq==$RELEASE_VER"
+"$TDIR/bin/romyq" --version
+"$TDIR/bin/romyq" version
+"$TDIR/bin/romyq" doctor
+rm -rf "$TDIR"
 ```
 
 ### 5. Publish to PyPI
@@ -129,11 +154,18 @@ romyq doctor
 twine upload dist/*
 ```
 
-Verify the live release:
+Verify the live release using an isolated venv (prevents PATH shadowing):
 
 ```bash
-pip install romyq==0.2.0
-romyq --version
+RELEASE_VER=0.2.0
+TDIR=/tmp/romyq-live-test
+
+python -m venv "$TDIR"
+"$TDIR/bin/pip" install "romyq==$RELEASE_VER"
+"$TDIR/bin/romyq" --version         # must print: romyq $RELEASE_VER
+"$TDIR/bin/romyq" version           # install must show: wheel or sdist
+"$TDIR/bin/pip"   show romyq
+rm -rf "$TDIR"
 ```
 
 ### 6. Tag the release
@@ -196,11 +228,14 @@ TWINE_USERNAME=__token__ TWINE_PASSWORD=pypi-... twine upload dist/*
 - [ ] `git status` is clean
 - [ ] `romyq doctor` passes
 - [ ] `python -m build` succeeds
-- [ ] Local wheel installs: `romyq --version` prints expected version
-- [ ] `romyq version` shows `wheel or sdist` (not `editable` or `0.0.0+unknown`)
-- [ ] `python -m romyq --version` matches `romyq --version`
-- [ ] (Optional) TestPyPI upload verified
+- [ ] Local wheel verified in isolated venv (Step 3): `$TDIR/bin/romyq --version` prints expected version
+- [ ] `$TDIR/bin/romyq version` shows `wheel or sdist` (not `editable` or `0.0.0+unknown`)
+- [ ] `$TDIR/bin/romyq version` `executable` field points inside `$TDIR/bin/`
+- [ ] `$TDIR/bin/pip show romyq` shows correct `Name` and `Version`
+- [ ] `python -m romyq --version` matches expected version (from development environment)
+- [ ] (Optional) TestPyPI upload verified in isolated venv (Step 4)
 - [ ] `twine upload dist/*` completed without errors (manual) or trusted publisher configured (automated)
 - [ ] `git tag v<version>` pushed
 - [ ] GitHub Actions workflow completed successfully
 - [ ] GitHub Release assets verified (4 binaries + wheel + sdist)
+- [ ] Live PyPI install verified in isolated venv (Step 5)

@@ -5,6 +5,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+# ── validation outcomes ───────────────────────────────────────────────────────
+# Three-state result: callers must check identity, not truthiness.
+SUCCESS = "success"           # Claude committed work; repo is clean
+FAILURE = "failure"           # something went wrong; workspace restored
+NO_ACTION_REQUIRED = "no_action_required"  # Claude confirmed task already done
+
 # Claude's prompt instructs it to print COMPLETED when it finishes a task.
 # If this marker is present, returncode is 0, and no new dirty files were
 # added, the task was already complete in the repository — not a failure.
@@ -101,8 +107,13 @@ def validate(
     pre_dirty: bool = False,
     stdout: str = "",
     pre_dirty_paths: frozenset = frozenset(),
-) -> tuple[bool, str]:
+) -> tuple[str, str]:
     """Validate that Claude produced a clean commit.
+
+    Returns a (outcome, reason) pair where outcome is one of:
+      SUCCESS            — Claude committed work and the repo is clean.
+      NO_ACTION_REQUIRED — Task was already satisfied; no commit needed.
+      FAILURE            — Something went wrong; workspace has been restored.
 
     pre_dirty: True when the working tree had uncommitted changes before Claude
     ran.  In that case _selective_restore() is used instead of a full restore:
@@ -124,8 +135,8 @@ def validate(
     if returncode != 0:
         safe_restore()
         if pre_dirty:
-            return False, "Claude exited with non-zero status (pre-existing changes preserved)"
-        return False, "Claude exited with non-zero status"
+            return FAILURE, "Claude exited with non-zero status (pre-existing changes preserved)"
+        return FAILURE, "Claude exited with non-zero status"
 
     if before_commit == after_commit:
         # Claude printed COMPLETED with nothing to commit → task was already
@@ -134,16 +145,16 @@ def validate(
         if _claude_completed(stdout):
             current_dirty = _current_dirty_files(workspace)
             if current_dirty <= pre_dirty_paths:
-                return True, "Task already complete — no changes needed"
+                return NO_ACTION_REQUIRED, "Task already complete — no changes needed"
         safe_restore()
         if pre_dirty:
-            return False, "No new commit created (pre-existing changes preserved)"
-        return False, "No new commit created"
+            return FAILURE, "No new commit created (pre-existing changes preserved)"
+        return FAILURE, "No new commit created"
 
     if _is_dirty(workspace):
         safe_restore()
         if pre_dirty:
-            return False, "Repository left dirty (pre-existing changes preserved)"
-        return False, "Repository left dirty — workspace restored"
+            return FAILURE, "Repository left dirty (pre-existing changes preserved)"
+        return FAILURE, "Repository left dirty — workspace restored"
 
-    return True, "Validation passed"
+    return SUCCESS, "Validation passed"
