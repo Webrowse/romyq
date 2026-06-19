@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.0
+
+**Interactive AI project management — live steering, plan decomposition, and guardrails.**
+
+**Interactive Init Wizard (`romyq init`):**
+- Add: `romyq/wizard_logic.py` — all testable wizard business logic: `validate_api_key()`, `write_env()`, `read_env_key()`, `write_mission()`, `setup_git()`, `add_gitignore_entries()`, `setup_workspace()`, `wizard_setup()`.
+- Add: `romyq/wizard.py` — `run_wizard()` dispatches to a Textual multi-screen wizard when `textual` is installed, or a text-mode fallback using `input()`/`getpass`.
+- Update: `romyq init` runs the wizard by default. `--no-wizard` falls back to legacy behavior. `--no-vcs` skips `git init`.
+
+**Live Execution Console (Dashboard):**
+- Update: `romyq/ui.py` — added Knowledge and Steering tabs to the sidebar.
+- Add: Command bar at the bottom of the dashboard (`Input` widget). Built-in commands: `pause`, `resume`, `stop`, `help`, `clear`. Anything else is recorded as an operator instruction.
+- Add: `_refresh_knowledge()` — reads `.romyq/knowledge.json` and shows lessons in the Knowledge tab on each poll cycle.
+- Add: `_refresh_steering()` — reads recent operator instructions from events.log and shows them in the Steering tab.
+
+**Steering Console (`romyq steer`):**
+- Add: `romyq/steering.py` — operator instruction events: `record_instruction()`, `recent_instructions()`, `instructions_text()`, `clear_instructions()`, `instruction_count()`.
+- Add: `romyq steer "instruction"` CLI command — records instruction to events.log immediately.
+- Update: `build_planning_context()` accepts `events_path` parameter. Operator instructions are injected at the TOP of every DeepSeek planning call (highest priority).
+
+**Mission Decomposition:**
+- Add: `romyq/decomposition.py` — `decompose()` calls DeepSeek at loop startup to generate an advisory plan. Persisted at `.romyq/plan.json` with `{version, generated_at, mission, tasks}`.
+- Add: Task status management: `mark_active()`, `mark_completed()`, `mark_skipped()`, `reset_active_tasks()`, `plan_summary()`, `format_plan()`.
+- Add: `romyq plan` CLI command — displays the current plan with status icons (□/→/✓/–).
+- Add: `store.plan_path(workspace)` returning `.romyq/plan.json`.
+
+**Planning Guardrails:**
+- Add: `romyq/planning_guardrails.py` — `GuardrailViolation` NamedTuple; `validate_task_against_knowledge()` checks proposed tasks against known failure patterns (exact fingerprint match and Jaccard similarity); `build_guardrail_context()` formats a rejection prompt; `validate_and_retry()` retries generation with guardrail context injected.
+- Update: Loop logs guardrail violations as `guardrail_triggered` events (advisory, does not block execution).
+
+**Live Knowledge Refresh:**
+- Add: Mid-session knowledge refresh triggered automatically when: 25+ new memory entries have accumulated since session start, OR `detect_recurring_failures()` returns non-empty patterns.
+- Add: Emits `knowledge_refreshed` event on each mid-session refresh.
+
+**Approval Mode:**
+- Add: `romyq run --approval` flag — prompts the user to approve or reject each Claude execution before it runs. Rejections are logged as `task_rejected` events.
+
+**New Events:**
+- Add: `events.KNOWLEDGE_REFRESHED`, `events.OPERATOR_INSTRUCTION`, `events.TASK_APPROVED`, `events.TASK_REJECTED`, `events.GUARDRAIL_TRIGGERED` constants.
+
+**Testing:**
+- Add: `tests/test_steering.py` — 32 tests covering `record_instruction`, `recent_instructions`, `instructions_text`, `instruction_count`, `clear_instructions`, and planning context integration.
+- Add: `tests/test_planning_guardrails.py` — 26 tests covering `GuardrailViolation`, `validate_task_against_knowledge`, `build_guardrail_context`, `validate_and_retry`.
+- Add: `tests/test_decomposition.py` — 36 tests covering `load_plan`, `write_plan`, `_parse_tasks`, `mark_active/completed/skipped`, `reset_active_tasks`, `plan_summary`, `format_plan`.
+- Add: `tests/test_wizard_logic.py` — 39 tests covering `demo_mission`, `validate_api_key`, `write_env`, `read_env_key`, `write_mission`, `setup_workspace`, `add_gitignore_entries`, `wizard_setup`, `PROVIDERS`.
+- Tests: 615 → 748 (+133).
+
 ## 0.6.0
 
 **Knowledge extraction and planning intelligence — the planner receives synthesized lessons, not raw history.**

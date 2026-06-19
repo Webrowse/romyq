@@ -55,7 +55,9 @@ That's it. Romyq takes over from here.
 | Command | Description |
 |---|---|
 | `romyq attach` | Attach Romyq to an existing git repository |
-| `romyq init` | Create a new managed workspace in the current directory |
+| `romyq init` | Create a new managed workspace (runs interactive wizard) |
+| `romyq init --no-wizard` | Non-interactive init (legacy behavior) |
+| `romyq init --no-vcs` | Init without running `git init` |
 | `romyq doctor` | Validate environment and configuration |
 
 **Running**
@@ -63,7 +65,9 @@ That's it. Romyq takes over from here.
 | Command | Description |
 |---|---|
 | `romyq run` | Start the autonomous development loop |
+| `romyq run --approval` | Prompt for approval before each Claude execution |
 | `romyq note "message"` | Inject a steering note into the next task |
+| `romyq steer "instruction"` | Send a live operator instruction to the planner |
 | `romyq pause` | Pause the loop after the current task finishes |
 | `romyq resume` | Resume a paused loop |
 | `romyq stop` | Request graceful shutdown after the current task |
@@ -89,6 +93,7 @@ That's it. Romyq takes over from here.
 | `romyq memory [--json]` | Execution memory: failure rates, retry patterns, mission outcomes |
 | `romyq knowledge [--json]` | Knowledge base: synthesized lessons and extracted patterns |
 | `romyq patterns [--json]` | Extracted failure and success patterns from the knowledge base |
+| `romyq plan [--json]` | Show the current mission task plan with status |
 | `romyq explain` | Full diagnostic picture: state, failures, recovery guidance |
 
 **Meta**

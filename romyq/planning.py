@@ -41,14 +41,23 @@ def build_planning_context(
     max_failures: int = 10,
     memory_path: str = "",
     knowledge_path: str = "",
+    events_path: str = "",
 ) -> str:
     """Return a prompt section to inject into the DeepSeek planning prompt.
 
     context_text:    contents of .romyq/context.md (pass '' to omit).
     memory_path:     path to .romyq/memory.json (pass '' to omit).
     knowledge_path:  path to .romyq/knowledge.json (pass '' to omit).
+    events_path:     path to .romyq/events.log for operator instructions (pass '' to omit).
     """
     parts: list[str] = []
+
+    # ── Operator instructions (highest priority) ──────────────────────────────
+    if events_path:
+        from . import steering as steering_mod
+        steer_ctx = steering_mod.instructions_text(events_path)
+        if steer_ctx:
+            parts.append(steer_ctx)
 
     # ── Repository memory ─────────────────────────────────────────────────────
     if context_text.strip():

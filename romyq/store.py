@@ -22,6 +22,7 @@ _EVENTS_FILE = "events.log"
 _CONTEXT_FILE    = "context.md"
 _MEMORY_FILE     = "memory.json"
 _KNOWLEDGE_FILE  = "knowledge.json"
+_PLAN_FILE       = "plan.json"
 
 # Legacy CWD-relative names → new names inside .romyq/
 _LEGACY = {
@@ -76,6 +77,10 @@ def memory_path(workspace: str) -> str:
 
 def knowledge_path(workspace: str) -> str:
     return str(ensure_dir(workspace) / _KNOWLEDGE_FILE)
+
+
+def plan_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _PLAN_FILE)
 
 
 def migrate(workspace: str) -> list[str]:

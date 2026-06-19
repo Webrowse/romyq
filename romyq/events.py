@@ -32,6 +32,11 @@ CRASH_RECOVERED = "crash_recovered"
 PHASE_CHANGED = "phase_changed"
 CLAUDE_CANCELLED = "claude_cancelled"
 CONTEXT_REFRESHED = "context_refreshed"
+KNOWLEDGE_REFRESHED = "knowledge_refreshed"
+OPERATOR_INSTRUCTION = "operator_instruction"
+TASK_APPROVED = "task_approved"
+TASK_REJECTED = "task_rejected"
+GUARDRAIL_TRIGGERED = "guardrail_triggered"
 
 
 # ── core operations ───────────────────────────────────────────────────────────

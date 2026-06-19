@@ -123,7 +123,33 @@ def _write_state_md(
 
 # ── main loop ─────────────────────────────────────────────────────────────────
 
-def run(workspace_path: str, until_complete: bool = False) -> None:
+_LIVE_REFRESH_INTERVAL = 25   # regenerate knowledge every N new memory entries
+
+
+def _approval_prompt(task: str) -> str:
+    """Ask user to approve/reject the proposed task. Returns 'approve' or 'reject'."""
+    print("\n" + "═" * 60)
+    print("APPROVAL REQUIRED")
+    print("═" * 60)
+    print("Proposed task:\n")
+    for line in task.splitlines()[:20]:
+        print(f"  {line}")
+    if len(task.splitlines()) > 20:
+        print("  ...")
+    print()
+    while True:
+        try:
+            answer = input("  [A]pprove  [R]eject  > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "reject"
+        if answer in ("a", "approve", "y", "yes"):
+            return "approve"
+        if answer in ("r", "reject", "n", "no"):
+            return "reject"
+        print("  Enter A to approve or R to reject.")
+
+
+def run(workspace_path: str, until_complete: bool = False, approval_mode: bool = False) -> None:
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise SystemExit("DEEPSEEK_API_KEY is not set. Add it to .env or your environment.")
@@ -140,6 +166,8 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     md_path = store.state_md_path(workspace_path)
     e_path = store.events_path(workspace_path)
     mem_path = store.memory_path(workspace_path)
+    know_path = store.knowledge_path(workspace_path)
+    plan_path = store.plan_path(workspace_path)
 
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(60 * 30)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
@@ -203,6 +231,46 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             activity.log("Knowledge base refreshed: .romyq/knowledge.json")
     except Exception:
         pass
+
+    # Generate mission plan if not already present.
+    try:
+        import pathlib as _pl
+        from . import decomposition as _dec_mod
+        if not _pl.Path(plan_path).exists():
+            mission_for_plan = load()
+            plan_data = _dec_mod.decompose(api_key, mission_for_plan)
+            _dec_mod.write_plan(plan_path, plan_data)
+            task_count = len(plan_data.get("tasks", []))
+            activity.log(f"Mission plan generated: {task_count} tasks in .romyq/plan.json")
+    except Exception:
+        pass
+
+    # Track memory entry count for live knowledge refresh.
+    _mem_entries_at_start = 0
+    try:
+        from . import knowledge as _know_mod2
+        _mem_entries_at_start = _know_mod2._count_memory_entries(mem_path)
+    except Exception:
+        pass
+
+    def _maybe_refresh_knowledge() -> None:
+        """Regenerate knowledge.json if 25+ new entries since last refresh."""
+        try:
+            from . import knowledge as _km
+            from .health_checks import detect_recurring_failures as _drf
+            nonlocal _mem_entries_at_start
+            current_count = _km._count_memory_entries(mem_path)
+            new_entries = current_count - _mem_entries_at_start
+            recurring = _drf(h_path)
+            if new_entries >= _LIVE_REFRESH_INTERVAL or recurring:
+                _km.write(know_path, mem_path, h_path, e_path, _ctx_text)
+                emit(e_path, ev.KNOWLEDGE_REFRESHED,
+                     new_entries=new_entries,
+                     recurring_failures=bool(recurring))
+                activity.log("Knowledge base refreshed mid-session.")
+                _mem_entries_at_start = current_count
+        except Exception:
+            pass
 
     def _heartbeat_cb(elapsed: int) -> None:
         remaining = max(0, timeout_s - elapsed)
@@ -367,6 +435,19 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 save_state(state, s_path)
                 continue
 
+            # Guardrail check: reject tasks matching known failure patterns
+            try:
+                from .planning_guardrails import validate_task_against_knowledge
+                from . import events as _ev_mod
+                violation = validate_task_against_knowledge(task, know_path, mem_path)
+                if violation:
+                    activity.log(f"Guardrail triggered: {violation.reason[:80]}")
+                    emit(e_path, _ev_mod.GUARDRAIL_TRIGGERED,
+                         fingerprint=violation.fingerprint,
+                         reason=violation.reason[:200])
+            except Exception:
+                pass
+
             if key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
                 activity.log(f"Task has failed {same_task_streak} times — switching to diagnosis mode.")
                 task = _make_diagnosis_task(task, same_task_streak)
@@ -391,6 +472,17 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 "Claude's changes will be selectively restored on failure; "
                 "your existing changes will be preserved."
             )
+
+        # ── approval mode ─────────────────────────────────────────────────────
+        if approval_mode and not in_diagnosis and pending_task is None:
+            decision = _approval_prompt(task)
+            if decision == "reject":
+                activity.log("Task rejected by operator — requesting new task from planner.")
+                emit(e_path, ev.TASK_REJECTED, key=key, reason="operator_rejected")
+                continue  # back to top to generate a new task
+
+            emit(e_path, ev.TASK_APPROVED, key=key)
+            activity.log("Task approved by operator.")
 
         emit(e_path, ev.TASK_STARTED, key=key, mode=mode, task_preview=task[:120])
 
@@ -550,6 +642,9 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             )
         except Exception:
             pass
+
+        # Live knowledge refresh (every 25 new entries or recurring failures)
+        _maybe_refresh_knowledge()
 
         set_last_commit(state, after_commit)
         state["last_validation_evidence"] = evidence[:30]  # cap stored evidence

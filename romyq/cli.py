@@ -19,27 +19,33 @@ def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
 # ── init ──────────────────────────────────────────────────────────────────────
 
 def cmd_init(args: argparse.Namespace) -> None:
+    """Launch the interactive setup wizard."""
     workspace_path = _resolve_workspace(args)
     root = Path(workspace_path).resolve()
 
-    bootstrap(workspace_path)           # creates git repo + .gitignore + initial commit
-    store.ensure_dir(workspace_path)    # creates .romyq/
+    no_vcs = getattr(args, "no_vcs", False)
+    skip_wizard = getattr(args, "no_wizard", False)
 
-    created = create_template(str(root))   # mission.md inside workspace, not CWD parent
-    if created:
-        print("Created mission.md — edit it to describe what you want to build.")
-    else:
-        print("mission.md already exists.")
+    if skip_wizard:
+        # Legacy: non-interactive init (old behaviour)
+        bootstrap(workspace_path)
+        store.ensure_dir(workspace_path)
+        created = create_template(str(root))
+        if created:
+            print("Created mission.md — edit it to describe what you want to build.")
+        else:
+            print("mission.md already exists.")
+        print(f"\nWorkspace ready at: {root}/")
+        print(f"State directory:    {root}/.romyq/")
+        print("\nNext steps:")
+        print("  1. Edit mission.md")
+        print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
+        path_arg = f" {workspace_path}" if workspace_path != "." else ""
+        print(f"  3. romyq run{path_arg}")
+        return
 
-    print(f"\nWorkspace ready at: {root}/")
-    print(f"State directory:    {root}/.romyq/")
-    print("\nNext steps:")
-    print("  1. Edit mission.md")
-    print("  2. Set DEEPSEEK_API_KEY in .env or your environment")
-    if workspace_path == ".":
-        print("  3. Run: romyq run")
-    else:
-        print(f"  3. cd {root} && romyq run")
+    from .wizard import run_wizard
+    run_wizard(workspace=str(root), no_vcs=no_vcs)
 
 
 # ── attach ────────────────────────────────────────────────────────────────────
@@ -242,7 +248,29 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     from .loop import run
-    run(workspace_path, until_complete=args.until_complete)
+    run(
+        workspace_path,
+        until_complete=args.until_complete,
+        approval_mode=getattr(args, "approval", False),
+    )
+
+
+# ── steer ─────────────────────────────────────────────────────────────────────
+
+def cmd_steer(args: argparse.Namespace) -> None:
+    """Record an operator instruction for the active loop."""
+    workspace_path = _resolve_workspace(args)
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+    store.migrate(workspace_path)
+    from .steering import record_instruction
+    instruction = args.instruction.strip()
+    if not instruction:
+        print("Error: instruction cannot be empty.")
+        sys.exit(1)
+    record_instruction(store.events_path(workspace_path), instruction)
+    print(f"Instruction recorded: {instruction}")
 
 
 # ── status ────────────────────────────────────────────────────────────────────
@@ -1062,6 +1090,50 @@ def cmd_memory(args: argparse.Namespace) -> None:
     print()
 
 
+# ── plan ──────────────────────────────────────────────────────────────────────
+
+def cmd_plan(args: argparse.Namespace) -> None:
+    """Show the mission decomposition plan."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .decomposition import load_plan, format_plan, plan_summary
+
+    p_path = store.plan_path(workspace_path)
+
+    if getattr(args, "json", False):
+        data = load_plan(p_path)
+        print(_json.dumps(data, indent=2))
+        return
+
+    data = load_plan(p_path)
+    if not data.get("generated_at"):
+        print("No mission plan found.")
+        print("Plans are generated automatically when 'romyq run' starts.")
+        return
+
+    SEP = "─" * 56
+    print(f"romyq plan: {root}")
+    print()
+    summary = plan_summary(p_path)
+    print(f"  Total tasks: {summary['total']}")
+    print(f"  Completed:   {summary.get('completed', 0)}")
+    print(f"  Pending:     {summary.get('pending', 0)}")
+    print(f"  Active:      {summary.get('active', 0)}")
+    print()
+    print(SEP)
+    print()
+    print(format_plan(p_path))
+    print()
+
+
 # ── knowledge ─────────────────────────────────────────────────────────────────
 
 def cmd_knowledge(args: argparse.Namespace) -> None:
@@ -1447,12 +1519,24 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", metavar="command")
     sub.required = True
 
-    p_init = sub.add_parser("init", help="Initialize a new romyq workspace")
+    p_init = sub.add_parser("init", help="Launch the interactive setup wizard")
     p_init.add_argument(
         "workspace",
         nargs="?",
         default=None,
         help="Path to the workspace directory (default: current directory)",
+    )
+    p_init.add_argument(
+        "--no-vcs",
+        action="store_true",
+        default=False,
+        help="Skip git initialization",
+    )
+    p_init.add_argument(
+        "--no-wizard",
+        action="store_true",
+        default=False,
+        help="Use legacy non-interactive init (no wizard)",
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -1497,7 +1581,23 @@ def main() -> None:
         default=False,
         help="Stop when the mission is complete (default: run indefinitely)",
     )
+    p_run.add_argument(
+        "--approval",
+        action="store_true",
+        default=False,
+        help="Require operator approval before each task is executed",
+    )
     p_run.set_defaults(func=cmd_run)
+
+    p_steer = sub.add_parser("steer", help="Record an operator instruction for the active loop")
+    p_steer.add_argument("instruction", help="Instruction to send to the planner")
+    p_steer.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_steer.set_defaults(func=cmd_steer)
 
     p_status = sub.add_parser("status", help="Show current run status")
     p_status.add_argument(
@@ -1617,6 +1717,21 @@ def main() -> None:
         help="Output memory analysis as JSON",
     )
     p_memory.set_defaults(func=cmd_memory)
+
+    p_plan = sub.add_parser("plan", help="Show the mission decomposition plan")
+    p_plan.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_plan.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output plan as JSON",
+    )
+    p_plan.set_defaults(func=cmd_plan)
 
     p_knowledge = sub.add_parser("knowledge", help="Show knowledge base: lessons, patterns, freshness")
     p_knowledge.add_argument(

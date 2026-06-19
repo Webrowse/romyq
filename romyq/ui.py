@@ -15,6 +15,7 @@ from textual.widgets import (
     DataTable,
     Footer,
     Header,
+    Input,
     Label,
     RichLog,
     Static,
@@ -25,7 +26,7 @@ from textual.widgets import (
 from . import notes as notes_mod, store
 from .findings import unresolved as findings_unresolved
 from .history import recent as history_recent
-from .state import load as load_state
+from .state import load as load_state, save as save_state
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -194,6 +195,36 @@ TabPane {
     padding: 0 1;
     overflow-y: auto;
 }
+
+/* ── command bar ── */
+#cmd-bar {
+    height: 3;
+    background: $surface-darken-1;
+    border-top: solid $primary-darken-2;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+#cmd-label {
+    width: auto;
+    height: 1;
+    content-align: left middle;
+    padding: 1 0;
+}
+
+#cmd-input {
+    height: 1;
+    width: 1fr;
+    margin: 1 0;
+    border: none;
+}
+
+#cmd-hint {
+    width: auto;
+    height: 1;
+    padding: 1 0;
+    color: $text-muted;
+}
 """
 
 
@@ -266,6 +297,18 @@ class RomyqDashboard(App):
                             yield Static("", id="findings-body")
                         with TabPane("Notes", id="notes-tab"):
                             yield Static("", id="notes-body")
+                        with TabPane("Knowledge", id="knowledge-tab"):
+                            yield Static("", id="knowledge-body")
+                        with TabPane("Steering", id="steering-tab"):
+                            yield Static("", id="steering-body")
+
+        with Horizontal(id="cmd-bar"):
+            yield Label("> ", id="cmd-label")
+            yield Input(
+                placeholder="Type a command or instruction (help, pause, resume, stop, clear, …)",
+                id="cmd-input",
+            )
+            yield Label("Enter to send", id="cmd-hint")
 
         yield Footer()
 
@@ -274,6 +317,74 @@ class RomyqDashboard(App):
     def on_mount(self) -> None:
         self.set_interval(2.0, self._poll)
         self._poll()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle command bar submission."""
+        if event.input.id != "cmd-input":
+            return
+        text = event.value.strip()
+        event.input.value = ""
+        if not text:
+            return
+        self._handle_command(text)
+
+    def _handle_command(self, text: str) -> None:
+        """Process a command typed in the command bar."""
+        cmd = text.lower().strip()
+
+        if cmd == "help":
+            self._show_help()
+            return
+
+        if cmd == "clear":
+            log = self.query_one("#output-log", RichLog)
+            log.clear()
+            return
+
+        if cmd in ("pause", "resume", "stop"):
+            self._write_control_flag(cmd)
+            return
+
+        # Anything else is treated as an operator instruction (steering)
+        try:
+            from .steering import record_instruction
+            record_instruction(store.events_path(self._workspace), text)
+            hint = self.query_one("#cmd-hint", Label)
+            hint.update(f"[green]Instruction recorded[/green]")
+            self.set_timer(2.0, lambda: hint.update("Enter to send"))
+        except Exception:
+            pass
+
+    def _write_control_flag(self, action: str) -> None:
+        try:
+            s_path = store.state_path(self._workspace)
+            state = load_state(s_path)
+            if action == "pause":
+                state["paused"] = True
+            elif action == "resume":
+                state["paused"] = False
+            elif action == "stop":
+                state["stop_requested"] = True
+            save_state(state, s_path)
+            hint = self.query_one("#cmd-hint", Label)
+            hint.update(f"[green]{action} sent[/green]")
+            self.set_timer(2.0, lambda: hint.update("Enter to send"))
+        except Exception:
+            pass
+
+    def _show_help(self) -> None:
+        log = self.query_one("#output-log", RichLog)
+        log.clear()
+        log.write(
+            "Available commands:\n"
+            "  pause    — pause the loop after the current task\n"
+            "  resume   — resume a paused loop\n"
+            "  stop     — stop the loop gracefully\n"
+            "  clear    — clear this output pane\n"
+            "  help     — show this help\n\n"
+            "Anything else is sent as an operator instruction to the planner.\n"
+            "Examples: 'focus on tests', 'use PostgreSQL', 'skip frontend'\n"
+        )
 
     # ── polling ───────────────────────────────────────────────────────────────
 
@@ -287,6 +398,8 @@ class RomyqDashboard(App):
             self._refresh_output()
             self._refresh_findings()
             self._refresh_notes()
+            self._refresh_knowledge()
+            self._refresh_steering()
         except Exception:
             pass
 
@@ -390,8 +503,38 @@ class RomyqDashboard(App):
         if lines:
             text = "\n".join(lines[-20:])
         else:
-            text = 'No steering notes.\nAdd with: romyq note "message"'
+            text = 'No steering notes.\nType instructions in the command bar below.'
         self.query_one("#notes-body", Static).update(text)
+
+    def _refresh_knowledge(self) -> None:
+        try:
+            from . import knowledge as know_mod
+            know_path = store.knowledge_path(self._workspace)
+            data = know_mod.load(know_path)
+            lessons = data.get("lessons", [])
+            gen_at = data.get("generated_at", "")
+            if not gen_at:
+                text = "(knowledge not yet generated — will refresh on next run)"
+            else:
+                age = _age(gen_at)
+                header = f"Generated {age} ago  |  {len(lessons)} lessons\n"
+                lesson_lines = [f"  {i}. {l}" for i, l in enumerate(lessons[:8], 1)]
+                text = header + "\n".join(lesson_lines) if lesson_lines else header + "  (no lessons)"
+        except Exception:
+            text = "(unavailable)"
+        self.query_one("#knowledge-body", Static).update(text)
+
+    def _refresh_steering(self) -> None:
+        try:
+            from .steering import recent_instructions
+            instructions = recent_instructions(store.events_path(self._workspace), limit=10)
+            if instructions:
+                text = "\n".join(f"  • {i}" for i in reversed(instructions))
+            else:
+                text = "(no operator instructions yet)\n\nType instructions in the command bar."
+        except Exception:
+            text = "(unavailable)"
+        self.query_one("#steering-body", Static).update(text)
 
     # ── actions ───────────────────────────────────────────────────────────────
 
