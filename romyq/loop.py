@@ -7,28 +7,37 @@ import time
 from datetime import datetime, timezone
 
 from . import activity, manager, notes, store, workspace as ws
+from .cancel import CancellationToken
+from .events import emit
+from . import events as ev
 from .findings import add_finding, extract_from_output
 from .history import add_entry
 from .mission import load
 from .runner import (
+    ClaudeCancelledError,
     ClaudeRateLimitError,
     ClaudeTimeoutError,
     run as run_claude,
     _DEFAULT_WAIT_SECONDS,
 )
+from .runstate import RunState
 from .state import (
     clear_rate_limit,
     heartbeat,
     increment_tasks,
+    is_task_blocked,
     load as load_state,
     mark_audit_complete,
     mark_completed,
     mark_stopped,
     next_mode,
+    record_task_failure,
+    record_task_success,
     refresh_control_flags,
     save as save_state,
     set_current_task,
     set_last_commit,
+    set_phase,
     set_rate_limited,
 )
 from .validator import FAILURE, NO_ACTION_REQUIRED, SUCCESS, validate
@@ -84,37 +93,23 @@ def _write_state_md(
     repo: dict,
     ok: bool,
     reason: str,
+    evidence: list[str] | None = None,
 ) -> None:
+    evidence_section = ""
+    if evidence:
+        evidence_section = "\n## Validation Evidence\n\n" + "\n".join(evidence[:50]) + "\n"
     with open(path, "w") as f:
         f.write(
             f"# Current State\n\n"
             f"## Last Task\n\n{task}\n\n"
             f"## Last Commit\n\n{repo['latest_commit']}\n\n"
-            f"## Validation\n\nSuccess: {ok}\n\nReason: {reason}\n\n"
-            f"## Git Status\n\n{repo['git_status']}\n\n"
+            f"## Validation\n\nSuccess: {ok}\n\nReason: {reason}\n"
+            f"{evidence_section}"
+            f"\n## Git Status\n\n{repo['git_status']}\n\n"
             f"## Repository Changes\n\n{repo['diff_stat']}\n\n"
             f"## Claude Output\n\n{stdout}\n\n"
             f"## Claude Errors\n\n{stderr}\n"
         )
-
-
-def _sleep_chunked(total_seconds: int, state_path: str) -> bool:
-    """Sleep for total_seconds, waking every 30 s to check stop_requested.
-
-    Returns True if a stop was requested during the sleep.
-    """
-    deadline = time.monotonic() + total_seconds
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        time.sleep(min(30.0, remaining))
-        try:
-            if load_state(state_path).get("stop_requested"):
-                return True
-        except Exception:
-            pass
-    return False
 
 
 # ── main loop ─────────────────────────────────────────────────────────────────
@@ -134,9 +129,15 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     h_path = store.history_path(workspace_path)
     f_path = store.findings_path(workspace_path)
     md_path = store.state_md_path(workspace_path)
+    e_path = store.events_path(workspace_path)
 
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(60 * 30)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
+
+    # Single CancellationToken for the entire session.
+    cancel_token = CancellationToken(s_path)
+
+    emit(e_path, ev.LOOP_STARTED, timeout_s=timeout_s)
 
     def _heartbeat_cb(elapsed: int) -> None:
         remaining = max(0, timeout_s - elapsed)
@@ -144,10 +145,9 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         r_fmt = f"{remaining // 60}m{remaining % 60:02d}s" if remaining >= 60 else f"{remaining}s"
         activity.log(f"Claude running ({e_fmt} elapsed, {r_fmt} remaining)")
 
-    # In-memory failure tracking (resets on restart).
+    # ── in-memory failure tracking (supplements persistent tracking) ──────────
     same_task_streak: int = 0
     last_failed_key: str | None = None
-    consecutive_failures: int = 0
     in_diagnosis: bool = False
     diagnosis_failures: int = 0
 
@@ -163,26 +163,36 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         # ── stop check ────────────────────────────────────────────────────────
         if state.get("stop_requested"):
             activity.log("Stop requested — exiting gracefully.")
+            emit(e_path, ev.STOP_DETECTED)
+            set_phase(state, RunState.STOPPING)
             mark_stopped(state)
+            set_phase(state, RunState.STOPPED)
             save_state(state, s_path)
+            emit(e_path, ev.LOOP_STOPPED, reason="stop_requested")
             break
 
-        # ── pause check (blocking) ────────────────────────────────────────────
+        # ── pause check (blocking poll) ───────────────────────────────────────
         if state.get("paused"):
             activity.log("Paused — waiting for 'romyq resume'…")
+            set_phase(state, RunState.PAUSED)
             save_state(state, s_path)
+            emit(e_path, ev.PAUSE_DETECTED)
             while True:
-                time.sleep(30)
+                time.sleep(5)
                 state = load_state(s_path)
                 heartbeat(state)
                 save_state(state, s_path)
                 if state.get("stop_requested"):
                     activity.log("Stop requested while paused — exiting.")
+                    emit(e_path, ev.STOP_DETECTED)
                     mark_stopped(state)
+                    set_phase(state, RunState.STOPPED)
                     save_state(state, s_path)
+                    emit(e_path, ev.LOOP_STOPPED, reason="stop_requested_while_paused")
                     return
                 if not state.get("paused"):
                     activity.log("Resumed.")
+                    emit(e_path, ev.RESUME_DETECTED)
                     break
 
         # ── mission & state setup ─────────────────────────────────────────────
@@ -199,6 +209,8 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
             if run_check:
                 activity.log("Checking mission completion...")
+                set_phase(state, RunState.PLANNING)
+                save_state(state, s_path)
                 completed, reason = manager.evaluate_completion(
                     api_key=api_key,
                     mission=mission,
@@ -211,15 +223,18 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                     heartbeat(state)
                     save_state(state, s_path)
                     if until_complete:
+                        emit(e_path, ev.LOOP_STOPPED, reason="mission_complete")
                         break
                     activity.log("Continuous mode — proceeding with improvements.")
                 else:
                     activity.log(f"Continuing — {reason}")
 
         # ── task selection ────────────────────────────────────────────────────
+        set_phase(state, RunState.PLANNING)
+
         if pending_task is not None:
             task = pending_task
-            key = pending_task_key  # ← Finding 4: always carry the key forward
+            key = pending_task_key
             pending_task = None
             pending_task_key = None
             activity.log(f"Task {task_num}  mode={mode}  (retrying after rate limit)")
@@ -236,6 +251,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             print(f"\n{task}\n")
 
         else:
+            # Check persistent block: has this task failed too many times?
             activity.log(f"Task {task_num}  mode={mode}")
             activity.log("Asking DeepSeek...")
             task = manager.generate_task(
@@ -252,6 +268,30 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
             activity.log("Task generated.")
             key = _task_key(task)
 
+            if is_task_blocked(state, key):
+                attempts = state.get("current_task_attempts", 0)
+                last_reason = state.get("last_failure_reason", "unknown")
+                activity.log(
+                    f"Task is BLOCKED after {attempts} attempts — "
+                    f"last failure: {last_reason}"
+                )
+                emit(e_path, ev.TASK_BLOCKED, key=key, attempts=attempts, last_reason=last_reason)
+                add_finding(
+                    title=f"Task blocked after {attempts} attempts",
+                    description=(
+                        f"Task key: {key}\n"
+                        f"Attempts: {attempts}\n"
+                        f"Last failure: {last_reason}\n"
+                        f"Task preview: {task[:300]}"
+                    ),
+                    severity="high",
+                    path=f_path,
+                )
+                # Reset the block so the loop can generate a different task next time
+                record_task_success(state)
+                save_state(state, s_path)
+                continue
+
             if key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
                 activity.log(f"Task has failed {same_task_streak} times — switching to diagnosis mode.")
                 task = _make_diagnosis_task(task, same_task_streak)
@@ -263,16 +303,12 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
         set_current_task(state, task)
         activity.log("Saving state...")
-        # Finding 1: re-read control flags before saving so a CLI pause/stop
-        # issued during task-generation is not silently overwritten.
         refresh_control_flags(state, s_path)
         save_state(state, s_path)
         activity.log("State saved.")
 
         before_commit = repo_before["latest_commit"]
         pre_dirty = bool(repo_before["git_status"].strip())
-        # Finding 3: capture the exact set of pre-existing dirty paths so the
-        # validator can selectively restore only Claude's changes on failure.
         pre_dirty_paths: frozenset = ws.dirty_files(workspace_path) if pre_dirty else frozenset()
         if pre_dirty:
             activity.log(
@@ -281,10 +317,17 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 "your existing changes will be preserved."
             )
 
+        emit(e_path, ev.TASK_STARTED, key=key, mode=mode, task_preview=task[:120])
+
         # ── run Claude ────────────────────────────────────────────────────────
         activity.log("Launching Claude...")
+        set_phase(state, RunState.EXECUTING)
+        heartbeat(state)
+        save_state(state, s_path)
+
         t_start = time.monotonic()
         timed_out = False
+        cancelled = False
 
         try:
             result = run_claude(
@@ -292,11 +335,26 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 task=task,
                 on_heartbeat=_heartbeat_cb,
                 timeout_seconds=timeout_s,
+                cancel_token=cancel_token,
             )
+
+        except ClaudeCancelledError:
+            # Stop was requested while Claude was running; exit cleanly.
+            cancelled = True
+            activity.log("Claude cancelled by stop request.")
+            emit(e_path, ev.CLAUDE_CANCELLED)
+            emit(e_path, ev.LOOP_STOPPED, reason="cancelled_during_execution")
+            state = load_state(s_path)
+            mark_stopped(state)
+            set_phase(state, RunState.STOPPED)
+            save_state(state, s_path)
+            return
 
         except ClaudeRateLimitError as e:
             # ── rate-limit handling ───────────────────────────────────────────
             activity.log("Claude rate limit detected.")
+            emit(e_path, ev.RATE_LIMIT_DETECTED,
+                 reset_display=e.reset_display, tz_name=e.tz_name)
 
             if e.reset_at is not None:
                 wait_s = max(60, int((e.reset_at - datetime.now(timezone.utc)).total_seconds()))
@@ -312,27 +370,27 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                 resume_iso = (datetime.now(timezone.utc) + timedelta(seconds=wait_s)).isoformat()
 
             set_rate_limited(state, resume_iso)
+            set_phase(state, RunState.RATE_LIMITED)
             heartbeat(state)
-            # Finding 1: refresh before save — a CLI stop issued between task
-            # generation and this point must not be discarded.
             refresh_control_flags(state, s_path)
             save_state(state, s_path)
 
-            stopped = _sleep_chunked(wait_s, s_path)
+            stopped = cancel_token.wait(wait_s)
 
             clear_rate_limit(state)
             heartbeat(state)
             refresh_control_flags(state, s_path)
             save_state(state, s_path)
+            emit(e_path, ev.RATE_LIMIT_RECOVERED)
 
             if stopped:
                 activity.log("Stop requested during rate-limit sleep — exiting.")
+                emit(e_path, ev.LOOP_STOPPED, reason="stop_during_rate_limit")
                 mark_stopped(state)
+                set_phase(state, RunState.STOPPED)
                 save_state(state, s_path)
                 break
 
-            # Retry the same task — do not generate a new DeepSeek task.
-            # Store the key alongside the task so Finding 4 is avoided.
             pending_task = task
             pending_task_key = key
             activity.log("Rate-limit sleep complete. Retrying task.")
@@ -353,31 +411,40 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         else:
             activity.log(f"Claude done ({elapsed}s).")
 
+        # ── validate ──────────────────────────────────────────────────────────
+        activity.log("Validating...")
+        set_phase(state, RunState.VALIDATING)
+        heartbeat(state)
+        save_state(state, s_path)
+
         repo_after = ws.inspect(workspace_path)
         after_commit = repo_after["latest_commit"]
 
-        activity.log("Validating...")
-        outcome, reason = validate(
+        vr = validate(
             workspace=workspace_path,
             before_commit=before_commit,
             after_commit=after_commit,
             returncode=result.returncode,
-            # Finding 2: pass stdout so validator can honour the COMPLETED marker.
             stdout=result.stdout,
-            # Finding 3: pass pre-existing dirty paths for selective restore.
             pre_dirty=pre_dirty,
             pre_dirty_paths=pre_dirty_paths,
         )
+        outcome = vr.outcome
+        reason = vr.reason
+        evidence = vr.evidence
 
         if outcome == FAILURE and timed_out:
             reason = f"Claude timed out after {elapsed}s ({timeout_s}s limit)"
 
         if outcome == SUCCESS:
             activity.log("Validation passed.")
+            emit(e_path, ev.VALIDATOR_PASSED, key=key, commit=after_commit)
         elif outcome == NO_ACTION_REQUIRED:
-            activity.log(f"Task already complete — no action required.")
+            activity.log("Task already complete — no action required.")
+            emit(e_path, ev.NO_ACTION_REQUIRED, key=key)
         else:
             activity.log(f"Validation failed — {reason}")
+            emit(e_path, ev.VALIDATOR_FAILED, key=key, reason=reason)
 
         add_entry(
             task=task,
@@ -389,23 +456,23 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         )
 
         set_last_commit(state, after_commit)
+        state["last_validation_evidence"] = evidence[:30]  # cap stored evidence
 
-        # ── failure tracking ──────────────────────────────────────────────────
+        # ── failure / success tracking ────────────────────────────────────────
         if outcome != FAILURE:
             if in_diagnosis:
                 activity.log("Diagnosis task succeeded — resuming normal operation.")
             same_task_streak = 0
             last_failed_key = None
-            consecutive_failures = 0
             in_diagnosis = False
             diagnosis_failures = 0
 
+            record_task_success(state)
             increment_tasks(state)
+            emit(e_path, ev.TASK_COMPLETED, key=key, outcome=outcome)
 
             if mode == "audit":
                 mark_audit_complete(state)
-                # Only extract findings from stdout when Claude actually committed
-                # work; NO_ACTION_REQUIRED means the audit found nothing to do.
                 if outcome == SUCCESS:
                     n = extract_from_output(result.stdout, mode, path=f_path)
                     if n:
@@ -414,6 +481,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         elif in_diagnosis:
             diagnosis_failures += 1
             activity.log(f"Diagnosis failed ({diagnosis_failures}/{_DIAGNOSIS_GIVEUP}) — {reason}")
+            record_task_failure(state, key, reason)
 
             if diagnosis_failures >= _DIAGNOSIS_GIVEUP:
                 activity.log("Diagnosis exhausted — recording finding and moving on.")
@@ -427,14 +495,15 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                     severity="high",
                     path=f_path,
                 )
+                record_task_success(state)
                 same_task_streak = 0
                 last_failed_key = None
-                consecutive_failures = 0
                 in_diagnosis = False
                 diagnosis_failures = 0
 
         else:
-            consecutive_failures += 1
+            # Normal failure
+            persistent_consec = record_task_failure(state, key, reason) or state.get("consecutive_failures", 0)
 
             if key == last_failed_key:
                 same_task_streak += 1
@@ -444,16 +513,19 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
 
             activity.log(
                 f"Failure streak: {same_task_streak} same-task, "
-                f"{consecutive_failures} consecutive."
+                f"{state.get('consecutive_failures', 0)} consecutive (persistent)."
             )
 
-            if consecutive_failures >= _CONSECUTIVE_THRESHOLD:
+            emit(e_path, ev.RETRY, key=key, streak=same_task_streak,
+                 consecutive=state.get("consecutive_failures", 0))
+
+            if state.get("consecutive_failures", 0) >= _CONSECUTIVE_THRESHOLD:
                 activity.log(
-                    f"Too many consecutive failures ({consecutive_failures}) — "
+                    f"Too many consecutive failures ({state['consecutive_failures']}) — "
                     "recording finding and resetting."
                 )
                 add_finding(
-                    title=f"Repeated failures: {consecutive_failures} consecutive",
+                    title=f"Repeated failures: {state['consecutive_failures']} consecutive",
                     description=(
                         f"Multiple consecutive failures across different tasks.\n"
                         f"Last failure: {reason}"
@@ -461,20 +533,20 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
                     severity="high",
                     path=f_path,
                 )
-                consecutive_failures = 0
+                record_task_success(state)
                 same_task_streak = 0
                 last_failed_key = None
 
         # ── state persistence ─────────────────────────────────────────────────
         activity.log("Saving state...")
+        set_phase(state, RunState.IDLE)
         heartbeat(state)
-        # Finding 1: re-read control flags immediately before the end-of-iteration
-        # save.  This is the most critical refresh point — Claude may have run
-        # for 30 minutes and any CLI pause/stop written during that window would
-        # otherwise be silently overwritten by the stale in-memory dict.
         refresh_control_flags(state, s_path)
         save_state(state, s_path)
-        _write_state_md(md_path, task, result.stdout, result.stderr, repo_after, outcome != FAILURE, reason)
+        _write_state_md(
+            md_path, task, result.stdout, result.stderr, repo_after,
+            outcome != FAILURE, reason, evidence,
+        )
         activity.log(f"State saved. Tasks completed: {state['tasks_completed']}")
 
         activity.log("Waiting 10s before next task...")

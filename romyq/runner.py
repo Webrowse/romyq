@@ -63,6 +63,11 @@ class ClaudeTimeoutError(Exception):
     pass
 
 
+class ClaudeCancelledError(Exception):
+    """Raised when a CancellationToken signals stop_requested during execution."""
+    pass
+
+
 # ── reset-time parsing ────────────────────────────────────────────────────────
 
 def _parse_reset_time(text: str) -> tuple[datetime | None, str | None, str | None]:
@@ -202,17 +207,25 @@ DEFAULT_TIMEOUT = 30 * 60  # 30 minutes
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
+_CANCEL_CHECK_INTERVAL = 5  # seconds between cancel-token polls during execution
+
+
 def run(
     workspace: str,
     task: str,
     on_heartbeat=None,
     timeout_seconds: int = DEFAULT_TIMEOUT,
+    cancel_token=None,
 ) -> subprocess.CompletedProcess:
     """Run Claude on a task.
 
+    cancel_token: optional CancellationToken; when its stop_requested flag is
+    found, Claude is terminated and ClaudeCancelledError is raised.
+
     Raises:
-        ClaudeRateLimitError  when Claude's output signals a session/usage limit.
-        ClaudeTimeoutError    when the process exceeds timeout_seconds.
+        ClaudeRateLimitError   when Claude's output signals a session/usage limit.
+        ClaudeTimeoutError     when the process exceeds timeout_seconds.
+        ClaudeCancelledError   when cancel_token.is_stop_requested() returns True.
     """
     prompt = _ENGINEER_PROMPT.format(task=task)
 
@@ -245,6 +258,7 @@ def run(
 
     start = time.monotonic()
     next_beat = 10
+    last_cancel_check = 0.0
 
     while proc.poll() is None:
         time.sleep(1)
@@ -256,6 +270,17 @@ def run(
             t_out.join(timeout=3)
             t_err.join(timeout=3)
             raise ClaudeTimeoutError(f"exceeded {timeout_seconds}s")
+
+        # Check cancellation token every _CANCEL_CHECK_INTERVAL seconds.
+        now = time.monotonic()
+        if cancel_token is not None and now - last_cancel_check >= _CANCEL_CHECK_INTERVAL:
+            last_cancel_check = now
+            if cancel_token.is_stop_requested():
+                activity.log("Stop requested — terminating Claude.")
+                _terminate(proc)
+                t_out.join(timeout=3)
+                t_err.join(timeout=3)
+                raise ClaudeCancelledError("stop_requested while Claude was executing")
 
         if elapsed >= next_beat:
             if on_heartbeat:

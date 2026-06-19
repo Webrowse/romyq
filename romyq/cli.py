@@ -264,16 +264,34 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("No state found. Has romyq been run yet?")
         sys.exit(1)
 
-    print(f"Workspace:       {Path(workspace_path).resolve()}")
-    print(f"Status:          {state['status']}")
-    print(f"Tasks completed: {state['tasks_completed']}")
-    print(f"Last commit:     {state['last_commit'] or '(none)'}")
-    print(f"Heartbeat:       {state['heartbeat'] or '(none)'}")
-    print(f"Audit interval:  every {state['audit_interval']} tasks")
+    W = 18
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    print(f"Workspace: {Path(workspace_path).resolve()}\n")
+    row("Status:", state["status"])
+    row("Phase:", state.get("phase", "idle"))
+    row("Tasks completed:", str(state["tasks_completed"]))
+    row("Last commit:", state["last_commit"] or "(none)")
+    row("Heartbeat:", state["heartbeat"] or "(none)")
+    row("Audit interval:", f"every {state['audit_interval']} tasks")
+
+    # Persistent failure tracking
+    attempts = state.get("current_task_attempts", 0)
+    if attempts > 0:
+        row("Task attempts:", f"{attempts} / {state.get('max_task_attempts', 3)}")
+        if state.get("last_failure_reason"):
+            row("Last failure:", state["last_failure_reason"][:80])
+        if state.get("last_failure_timestamp"):
+            row("Failed at:", state["last_failure_timestamp"])
+    consec = state.get("consecutive_failures", 0)
+    if consec > 0:
+        row("Consec. failures:", str(consec))
 
     if state["current_task"]:
         task_preview = state["current_task"][:120].replace("\n", " ")
-        print(f"Current task:    {task_preview}...")
+        row("Current task:", task_preview + "...")
 
 
 # ── logs ──────────────────────────────────────────────────────────────────────
@@ -424,6 +442,21 @@ def cmd_health(args: argparse.Namespace) -> None:
     else:
         row("heartbeat", "(none — not yet run)")
 
+    # Phase
+    row("phase", state.get("phase", "idle"))
+
+    # Persistent failure tracking
+    attempts = state.get("current_task_attempts", 0)
+    consec = state.get("consecutive_failures", 0)
+    if attempts > 0:
+        ceiling = state.get("max_task_attempts", 3)
+        row("task attempts", f"{attempts} / {ceiling}")
+    if consec > 0:
+        row("consec. failures", str(consec))
+    if state.get("last_failure_reason"):
+        reason_preview = state["last_failure_reason"][:60]
+        row("last failure", reason_preview)
+
     # Findings
     f_items = findings_unresolved(store.findings_path(workspace_path))
     if f_items:
@@ -531,6 +564,18 @@ def cmd_report(args: argparse.Namespace) -> None:
             preview = entry["task"].replace("\n", " ")[:70]
             print(f"  {mark} [{ts}]  {preview}")
 
+    # Recent events
+    from .events import tail as events_tail
+    evt_items = events_tail(store.events_path(workspace_path), n=10)
+    if evt_items:
+        section("Recent Events")
+        for entry in evt_items:
+            ts = entry.get("ts", "")[:19].replace("T", " ")
+            evt = entry.get("event", "?")
+            extras = {k: v for k, v in entry.items() if k not in ("ts", "event")}
+            kv = "  ".join(f"{k}={v!r}" for k, v in extras.items()) if extras else ""
+            print(f"  [{ts}] {evt}" + (f"  {kv}" if kv else ""))
+
     print()
 
 
@@ -556,6 +601,37 @@ def cmd_ui(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     launch(workspace_path)
+
+
+# ── events ───────────────────────────────────────────────────────────────────
+
+def cmd_events(args: argparse.Namespace) -> None:
+    from dotenv import load_dotenv
+    load_dotenv()
+    from .events import tail
+
+    workspace_path = _resolve_workspace(args)
+    if not Path(workspace_path).is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+    e_path = store.events_path(workspace_path)
+    events = tail(e_path, n=args.last)
+
+    if not events:
+        print("No events recorded yet.")
+        return
+
+    for entry in events:
+        ts = entry.get("ts", "")[:19].replace("T", " ")
+        evt = entry.get("event", "?")
+        extras = {k: v for k, v in entry.items() if k not in ("ts", "event")}
+        parts = [f"[{ts}] {evt}"]
+        if extras:
+            kv = "  ".join(f"{k}={v!r}" for k, v in extras.items())
+            parts.append(f"  {kv}")
+        print("".join(parts))
 
 
 # ── pause / resume / stop ─────────────────────────────────────────────────────
@@ -792,6 +868,19 @@ def main() -> None:
 
     p_version = sub.add_parser("version", help="Show version and install information")
     p_version.set_defaults(func=cmd_version)
+
+    p_events = sub.add_parser("events", help="Show recent event log entries")
+    p_events.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_events.add_argument(
+        "--last", type=int, default=30, metavar="N",
+        help="Number of entries to show (default: 30)",
+    )
+    p_events.set_defaults(func=cmd_events)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

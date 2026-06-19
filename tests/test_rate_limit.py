@@ -245,7 +245,7 @@ class TestPauseResumeStop:
 # ── rate-limit wait mode ──────────────────────────────────────────────────────
 
 class TestRateLimitWaitMode:
-    """Verify that _sleep_chunked respects stop_requested and returns correctly."""
+    """Verify that CancellationToken.wait() respects stop_requested."""
 
     def _make_state_file(self, tmp_path: Path, stop: bool = False) -> Path:
         state = DEFAULT_STATE.copy()
@@ -254,21 +254,40 @@ class TestRateLimitWaitMode:
         p.write_text(json.dumps(state))
         return p
 
-    def test_sleep_chunked_normal_exit(self, tmp_path):
-        from romyq.loop import _sleep_chunked
+    def test_cancellation_token_normal_exit(self, tmp_path):
+        """wait() returns False when timeout elapses without stop."""
+        from romyq.cancel import CancellationToken
         state_file = self._make_state_file(tmp_path)
-        with patch("romyq.loop.time.sleep"), \
-             patch("romyq.loop.time.monotonic", side_effect=[0.0, 0.0, 31.0]):
-            stopped = _sleep_chunked(30, str(state_file))
+        token = CancellationToken(str(state_file))
+        # monotonic is called: deadline=t0, remaining=t1, _refresh.now=t2, remaining=t3
+        with patch("romyq.cancel.time.sleep"), \
+             patch("romyq.cancel.time.monotonic", side_effect=[0.0, 0.0, 5.0, 10.0]):
+            stopped = token.wait(1)
         assert stopped is False
 
-    def test_sleep_chunked_stop_requested(self, tmp_path):
-        from romyq.loop import _sleep_chunked
+    def test_cancellation_token_stop_requested(self, tmp_path):
+        """wait() returns True when stop_requested is found in the state file."""
+        from romyq.cancel import CancellationToken
         state_file = self._make_state_file(tmp_path, stop=True)
-        with patch("romyq.loop.time.sleep"):
-            with patch("romyq.loop.time.monotonic", side_effect=[0.0, 0.0, 31.0]):
-                stopped = _sleep_chunked(30, str(state_file))
+        token = CancellationToken(str(state_file))
+        with patch("romyq.cancel.time.sleep"), \
+             patch("romyq.cancel.time.monotonic", side_effect=[0.0, 0.0, 100.0]):
+            stopped = token.wait(30)
         assert stopped is True
+
+    def test_cancellation_token_is_stop_requested(self, tmp_path):
+        """is_stop_requested() reads stop flag from state file."""
+        from romyq.cancel import CancellationToken
+        state_file = self._make_state_file(tmp_path, stop=True)
+        token = CancellationToken(str(state_file))
+        assert token.is_stop_requested() is True
+
+    def test_cancellation_token_not_stopped(self, tmp_path):
+        """is_stop_requested() returns False when stop is not set."""
+        from romyq.cancel import CancellationToken
+        state_file = self._make_state_file(tmp_path, stop=False)
+        token = CancellationToken(str(state_file))
+        assert token.is_stop_requested() is False
 
 
 # ── Finding 4: task key on pending_task path ──────────────────────────────────

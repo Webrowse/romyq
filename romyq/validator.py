@@ -4,18 +4,37 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 # ── validation outcomes ───────────────────────────────────────────────────────
 # Three-state result: callers must check identity, not truthiness.
-SUCCESS = "success"           # Claude committed work; repo is clean
-FAILURE = "failure"           # something went wrong; workspace restored
+SUCCESS = "success"            # Claude committed work; repo is clean
+FAILURE = "failure"            # something went wrong; workspace restored
 NO_ACTION_REQUIRED = "no_action_required"  # Claude confirmed task already done
 
 # Claude's prompt instructs it to print COMPLETED when it finishes a task.
-# If this marker is present, returncode is 0, and no new dirty files were
-# added, the task was already complete in the repository — not a failure.
 _COMPLETED_RE = re.compile(r"\bCOMPLETED\b")
 
+# Maximum stdout characters included in evidence (avoids giant log entries).
+_EVIDENCE_STDOUT_LIMIT = 2000
+
+
+class ValidationResult(NamedTuple):
+    """Structured outcome from a validate() call.
+
+    outcome  — one of SUCCESS / FAILURE / NO_ACTION_REQUIRED
+    reason   — human-readable one-liner
+    evidence — list of strings providing supporting detail (git diff lines,
+               stdout tail, exit code) that is shown to Claude on retry and
+               persisted in state.json["last_validation_evidence"]
+    """
+
+    outcome: str
+    reason: str
+    evidence: list[str]
+
+
+# ── restore helpers ───────────────────────────────────────────────────────────
 
 def _restore(workspace: str) -> None:
     subprocess.run(["git", "checkout", "."], cwd=workspace, capture_output=True)
@@ -42,7 +61,6 @@ def _current_dirty_files(workspace: str) -> frozenset:
             continue
         fname = line[3:].strip()
         if " -> " in fname:
-            # Rename: "R old -> new" — track the destination
             fname = fname.split(" -> ", 1)[1].strip()
         files.add(fname)
     return frozenset(files)
@@ -72,23 +90,17 @@ def _selective_restore(workspace: str, pre_dirty_paths: frozenset) -> None:
 
         path = root / fname
         if "?" in status:
-            # Untracked file — delete it
+            # Untracked — delete
             if path.is_symlink() or path.is_file():
                 path.unlink(missing_ok=True)
             elif path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
         else:
-            # Tracked modification or staged file — unstage then restore
-            subprocess.run(
-                ["git", "reset", "HEAD", "--", fname],
-                cwd=workspace, capture_output=True,
-            )
-            res = subprocess.run(
-                ["git", "checkout", "--", fname],
-                cwd=workspace, capture_output=True,
-            )
+            # Tracked modification or staged — unstage then restore
+            subprocess.run(["git", "reset", "HEAD", "--", fname], cwd=workspace, capture_output=True)
+            res = subprocess.run(["git", "checkout", "--", fname], cwd=workspace, capture_output=True)
             if res.returncode != 0:
-                # File doesn't exist in HEAD (newly staged) — delete it
+                # Newly staged file with no HEAD version — delete it
                 if path.is_symlink() or path.is_file():
                     path.unlink(missing_ok=True)
                 elif path.is_dir():
@@ -99,6 +111,28 @@ def _claude_completed(stdout: str) -> bool:
     return bool(_COMPLETED_RE.search(stdout))
 
 
+# ── evidence collection ───────────────────────────────────────────────────────
+
+def _git_diff_lines(workspace: str, n: int = 30) -> list[str]:
+    """Return up to n lines of the current git diff (staged + unstaged)."""
+    r = subprocess.run(
+        ["git", "diff", "HEAD"],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    lines = r.stdout.splitlines()
+    if len(lines) > n:
+        lines = lines[:n] + [f"… ({len(lines) - n} more diff lines)"]
+    return lines
+
+
+def _stdout_tail(stdout: str) -> list[str]:
+    """Return the last portion of Claude's stdout as evidence lines."""
+    text = stdout[-_EVIDENCE_STDOUT_LIMIT:] if len(stdout) > _EVIDENCE_STDOUT_LIMIT else stdout
+    return text.splitlines()
+
+
+# ── main validation ───────────────────────────────────────────────────────────
+
 def validate(
     workspace: str,
     before_commit: str,
@@ -107,24 +141,20 @@ def validate(
     pre_dirty: bool = False,
     stdout: str = "",
     pre_dirty_paths: frozenset = frozenset(),
-) -> tuple[str, str]:
+) -> ValidationResult:
     """Validate that Claude produced a clean commit.
 
-    Returns a (outcome, reason) pair where outcome is one of:
-      SUCCESS            — Claude committed work and the repo is clean.
-      NO_ACTION_REQUIRED — Task was already satisfied; no commit needed.
-      FAILURE            — Something went wrong; workspace has been restored.
+    Returns a ValidationResult with:
+      outcome  — SUCCESS / FAILURE / NO_ACTION_REQUIRED
+      reason   — human-readable summary
+      evidence — list of strings for diagnosis (git diff, stdout tail, exit code)
 
     pre_dirty: True when the working tree had uncommitted changes before Claude
-    ran.  In that case _selective_restore() is used instead of a full restore:
-    it cleans only Claude's additions while leaving pre-existing dirty files
-    exactly as the user left them.
+    ran.  _selective_restore() is used on failure to preserve pre-existing files.
 
-    stdout: Claude's combined stdout, used to detect the COMPLETED marker that
-    signals a task was already done in the repository (no new commit needed).
+    stdout: Claude's combined stdout, used to detect the COMPLETED marker.
 
-    pre_dirty_paths: frozenset of file paths that were dirty before Claude ran.
-    Files in this set are never touched during selective restore.
+    pre_dirty_paths: frozenset of relative file paths dirty before Claude ran.
     """
     def safe_restore() -> None:
         if pre_dirty:
@@ -132,29 +162,41 @@ def validate(
         else:
             _restore(workspace)
 
+    def make(outcome: str, reason: str, extra_evidence: list[str] | None = None) -> ValidationResult:
+        evidence: list[str] = [f"exit_code={returncode}", f"outcome={outcome}"]
+        if extra_evidence:
+            evidence.extend(extra_evidence)
+        stdout_lines = _stdout_tail(stdout)
+        if stdout_lines:
+            evidence.append("--- stdout (tail) ---")
+            evidence.extend(stdout_lines)
+        return ValidationResult(outcome=outcome, reason=reason, evidence=evidence)
+
+    # ── non-zero exit ─────────────────────────────────────────────────────────
     if returncode != 0:
         safe_restore()
-        if pre_dirty:
-            return FAILURE, "Claude exited with non-zero status (pre-existing changes preserved)"
-        return FAILURE, "Claude exited with non-zero status"
+        diff = _git_diff_lines(workspace)
+        prefix = "(pre-existing changes preserved)" if pre_dirty else ""
+        reason = f"Claude exited with non-zero status {prefix}".rstrip()
+        return make(FAILURE, reason, diff)
 
+    # ── no new commit ─────────────────────────────────────────────────────────
     if before_commit == after_commit:
-        # Claude printed COMPLETED with nothing to commit → task was already
-        # done in the repository.  Only accept this if Claude left no new dirty
-        # files (current dirty == pre-existing dirty or empty).
         if _claude_completed(stdout):
             current_dirty = _current_dirty_files(workspace)
             if current_dirty <= pre_dirty_paths:
-                return NO_ACTION_REQUIRED, "Task already complete — no changes needed"
+                return make(NO_ACTION_REQUIRED, "Task already complete — no changes needed")
         safe_restore()
-        if pre_dirty:
-            return FAILURE, "No new commit created (pre-existing changes preserved)"
-        return FAILURE, "No new commit created"
+        prefix = "(pre-existing changes preserved)" if pre_dirty else ""
+        reason = f"No new commit created {prefix}".rstrip()
+        return make(FAILURE, reason)
 
+    # ── dirty tree after commit ───────────────────────────────────────────────
     if _is_dirty(workspace):
+        diff = _git_diff_lines(workspace)
         safe_restore()
-        if pre_dirty:
-            return FAILURE, "Repository left dirty (pre-existing changes preserved)"
-        return FAILURE, "Repository left dirty — workspace restored"
+        prefix = "(pre-existing changes preserved)" if pre_dirty else "— workspace restored"
+        reason = f"Repository left dirty {prefix}".rstrip()
+        return make(FAILURE, reason, diff)
 
-    return SUCCESS, "Validation passed"
+    return make(SUCCESS, "Validation passed")

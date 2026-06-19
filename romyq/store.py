@@ -18,6 +18,7 @@ _HISTORY_FILE = "history.json"
 _FINDINGS_FILE = "findings.json"
 _STATE_MD = "state.md"
 _NOTES_FILE = "notes.md"
+_EVENTS_FILE = "events.log"
 
 # Legacy CWD-relative names → new names inside .romyq/
 _LEGACY = {
@@ -56,6 +57,10 @@ def state_md_path(workspace: str) -> str:
 
 def notes_path(workspace: str) -> str:
     return str(ensure_dir(workspace) / _NOTES_FILE)
+
+
+def events_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _EVENTS_FILE)
 
 
 def migrate(workspace: str) -> list[str]:
