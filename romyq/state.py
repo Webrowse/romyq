@@ -12,6 +12,12 @@ DEFAULT_STATE = {
     "current_task": "",
     "last_commit": "",
     "audit_interval": 5,
+    # Rate-limit fields (populated while Claude is throttled)
+    "resume_at": "",        # ISO timestamp when the rate limit lifts
+    "provider": "",         # "claude" when throttled by Claude
+    # Control flags (written by romyq pause / resume / stop)
+    "paused": False,        # loop waits between tasks when True
+    "stop_requested": False,  # loop exits gracefully when True
 }
 
 
@@ -69,6 +75,41 @@ def set_last_commit(data: dict, commit: str) -> None:
 
 def mark_completed(data: dict) -> None:
     data["status"] = "completed"
+
+
+def set_rate_limited(data: dict, resume_at: str, provider: str = "claude") -> None:
+    data["status"] = "rate_limited"
+    data["resume_at"] = resume_at
+    data["provider"] = provider
+
+
+def clear_rate_limit(data: dict) -> None:
+    data["status"] = "running"
+    data["resume_at"] = ""
+    data["provider"] = ""
+
+
+def mark_stopped(data: dict) -> None:
+    data["status"] = "stopped"
+    data["stop_requested"] = False
+
+
+def refresh_control_flags(data: dict, path: str) -> None:
+    """Merge stop_requested and paused from disk into the in-memory dict.
+
+    Call this immediately before save() whenever the loop has held the dict
+    across a long-running operation (Claude execution, rate-limit sleep).
+    Without this, any CLI write to those flags during that window would be
+    silently overwritten by the loop's save.
+    """
+    try:
+        with open(path) as f:
+            on_disk = json.load(f)
+        for flag in ("paused", "stop_requested"):
+            if flag in on_disk:
+                data[flag] = on_disk[flag]
+    except Exception:
+        pass
 
 
 def audit_due(data: dict) -> bool:

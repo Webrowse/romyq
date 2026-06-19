@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.3 (unreleased)
+
+**Production-readiness fixes (top 5 audit findings):**
+
+- Fix: state write-after-read race condition — `refresh_control_flags()` re-reads `paused` and `stop_requested` from disk immediately before every `save_state()` call; CLI pause/stop/resume commands are no longer silently discarded during Claude execution
+- Fix: validator false-failed already-complete tasks — the `COMPLETED` marker in Claude's stdout is now recognised as success when returncode is 0 and no new dirty files were left; eliminates the infinite retry loop on tasks the repository already satisfies
+- Fix: dirty repository state compounding across failures — `_selective_restore()` cleans only Claude's additions on failure, leaving pre-existing uncommitted changes intact; successive failures no longer accumulate junk in the working tree
+- Fix: undefined `key` variable on rate-limit retry path — `pending_task_key` is stored alongside `pending_task` so the failure-tracking block never references a stale or undefined key
+- Fix: generic phrase rate-limit false positives — removed pattern matching on `"rate limit"`, `"usage limit"`, `"too many requests"`, etc.; only the specific Claude session-limit message triggers rate-limit handling, preventing infinite 30-minute sleeps on projects that implement their own rate limiters
+
+**Earlier additions in this release:**
+
+- Add: Claude rate-limit detection — parses `resets HH:MMam (TZ)` from output, sleeps until reset + 5 min buffer, retries same task
+- Add: `ClaudeRateLimitError` with `reset_at`, `tz_name`, `reset_display` attributes
+- Add: `romyq pause` / `romyq resume` / `romyq stop` — loop control via state flags
+- Add: state fields `resume_at`, `provider`, `paused`, `stop_requested`
+- Add: dashboard shows `RATE LIMITED — resumes in Xm` and `PAUSED` status badges
+- Add: tests for rate-limit detection, reset-time parsing, pause/resume/stop commands
+
 ## 0.1.2 (unreleased)
 
 - Add: `romyq ui` — live Textual dashboard (optional dep: `pip install 'romyq[ui]'`)

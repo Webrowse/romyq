@@ -119,6 +119,28 @@ def diff_stat(path: str) -> str:
     return r.stdout.strip()
 
 
+def dirty_files(path: str) -> frozenset:
+    """Return the set of dirty (modified, staged, or untracked) file paths.
+
+    Paths are relative to the repository root, matching git status --porcelain
+    output.  Used to distinguish pre-existing dirty files from changes Claude
+    made so the validator can restore only Claude's additions on failure.
+    """
+    r = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=path, capture_output=True, text=True,
+    )
+    files = set()
+    for line in r.stdout.splitlines():
+        if len(line) < 3:
+            continue
+        fname = line[3:].strip()
+        if " -> " in fname:
+            fname = fname.split(" -> ", 1)[1].strip()
+        files.add(fname)
+    return frozenset(files)
+
+
 def inspect(path: str) -> dict:
     if not Path(path).is_dir():
         return {"git_log": "", "git_status": "", "latest_commit": "", "diff_stat": ""}
