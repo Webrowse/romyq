@@ -1,49 +1,42 @@
 # Changelog
 
-## 0.1.3 (unreleased)
+## 0.2.0
 
-**Release-verification and reliability fixes:**
+**Reliability hardening — safe to run unattended for 8–12 hours:**
 
-- Fix: validator now returns a three-way outcome (`SUCCESS`, `FAILURE`, `NO_ACTION_REQUIRED`) — already-complete tasks advance without incrementing failure streaks or creating findings, and audit finding extraction is skipped for `NO_ACTION_REQUIRED`
-- Fix: `romyq version` now shows `executable` (absolute path of the running binary) and `venv` (active virtual environment path); warns when not running inside a venv
-- Fix: RELEASE.md and ALPHA_CHECKLIST.md now use isolated venv paths (`$TDIR/bin/romyq`) for all release verification steps, preventing PATH-shadowing by a global install from producing silent false positives
+- Add: `CancellationToken` — file-polling stop/pause token with 5s interval; stop latency is now ≤5s (was up to 30s)
+- Add: Claude mid-task cancellation — `runner.run()` polls the token every 5s and terminates Claude via SIGTERM, raising `ClaudeCancelledError`
+- Add: Persistent failure tracking — `current_task_key`, `current_task_attempts`, `last_failure_reason`, `last_failure_timestamp`, `consecutive_failures`, `max_task_attempts` all written to `state.json` and survive restarts
+- Add: Blocked-task detection — tasks that exceed `max_task_attempts` (default 3) are skipped with a finding instead of retried indefinitely
+- Add: `RunState` enum with documented transitions (`IDLE → PLANNING → EXECUTING → VALIDATING → IDLE`); `STOPPING`/`STOPPED` reachable from any state as an emergency exit
+- Add: `set_phase()` — validates transitions, warns on invalid, updates heartbeat; `phase` field visible in `romyq status` and `romyq health`
+- Add: `ValidationResult` NamedTuple — `(outcome, reason, evidence[])` where evidence includes exit code, git diff lines, and stdout tail for postmortem debugging
+- Add: Append-only NDJSON event log at `.romyq/events.log`; `romyq events [--last N]` command; "Recent Events" section in `romyq report`
+- Add: `refresh_control_flags()` merges `paused`/`stop_requested` from disk before every `save_state()` call — CLI control commands issued during long Claude executions are no longer silently discarded
+- Fix: validator three-way outcome (`SUCCESS` / `FAILURE` / `NO_ACTION_REQUIRED`) — already-complete tasks advance without incrementing failure streaks or creating findings
+- Fix: `romyq version` now shows `executable` (absolute path) and `venv` (active virtualenv); warns when not running inside a venv
+- Fix: RELEASE.md and ALPHA_CHECKLIST.md use isolated venv paths (`$TDIR/bin/romyq`) to prevent PATH-shadowing false positives during release verification
+- Fix: state write-after-read race — `refresh_control_flags()` prevents loop saves from overwriting CLI pause/stop signals
+- Fix: dirty repository state compounding — `_selective_restore()` cleans only Claude's additions on failure, leaving pre-existing uncommitted changes intact
+- Fix: undefined `key` variable on rate-limit retry path
+- Fix: generic phrase rate-limit false positives — only the specific Claude session-limit message triggers rate-limit handling
+- Tests: 91 → 193 (+102); four new test modules: `test_cancellation`, `test_events`, `test_failure_tracking`, `test_runstate`; overnight simulation scenarios in `test_simulation`
 
-**Production-readiness fixes (top 5 audit findings):**
+**Observability and loop control (included from 0.1.2–0.1.3 unreleased):**
 
-- Fix: state write-after-read race condition — `refresh_control_flags()` re-reads `paused` and `stop_requested` from disk immediately before every `save_state()` call; CLI pause/stop/resume commands are no longer silently discarded during Claude execution
-- Fix: validator false-failed already-complete tasks — the `COMPLETED` marker in Claude's stdout is now recognised as success when returncode is 0 and no new dirty files were left; eliminates the infinite retry loop on tasks the repository already satisfies
-- Fix: dirty repository state compounding across failures — `_selective_restore()` cleans only Claude's additions on failure, leaving pre-existing uncommitted changes intact; successive failures no longer accumulate junk in the working tree
-- Fix: undefined `key` variable on rate-limit retry path — `pending_task_key` is stored alongside `pending_task` so the failure-tracking block never references a stale or undefined key
-- Fix: generic phrase rate-limit false positives — removed pattern matching on `"rate limit"`, `"usage limit"`, `"too many requests"`, etc.; only the specific Claude session-limit message triggers rate-limit handling, preventing infinite 30-minute sleeps on projects that implement their own rate limiters
-
-**Earlier additions in this release:**
-
-- Add: Claude rate-limit detection — parses `resets HH:MMam (TZ)` from output, sleeps until reset + 5 min buffer, retries same task
-- Add: `ClaudeRateLimitError` with `reset_at`, `tz_name`, `reset_display` attributes
-- Add: `romyq pause` / `romyq resume` / `romyq stop` — loop control via state flags
-- Add: state fields `resume_at`, `provider`, `paused`, `stop_requested`
-- Add: dashboard shows `RATE LIMITED — resumes in Xm` and `PAUSED` status badges
-- Add: tests for rate-limit detection, reset-time parsing, pause/resume/stop commands
-
-## 0.1.2 (unreleased)
-
-- Add: `romyq ui` — live Textual dashboard (optional dep: `pip install 'romyq[ui]'`)
-  - Current task panel
-  - Task history table
-  - Last Claude output (from state.md)
-  - Findings and steering notes (tabbed)
-  - Status bar: status, task count, heartbeat age, last commit
-  - Polls state files every 2 seconds; no changes to the running loop
+- Add: `romyq ui` — live Textual dashboard (`pip install 'romyq[ui]'`)
 - Add: `romyq health` — operational health snapshot
 - Add: `romyq report` — full human-readable project summary
+- Add: `romyq pause` / `romyq resume` / `romyq stop` — loop control via state flags
+- Add: Claude rate-limit detection — parses `resets HH:MMam (TZ)`, sleeps until reset + 5 min buffer, retries same task
 - Add: `.github/ISSUE_TEMPLATE/` — bug report and feature request forms
 
 ## 0.1.1
 
-- Fix: `romyq init` now creates everything (`.romyq/`, `mission.md`, git repo) inside the workspace directory, not split between the workspace and its parent
+- Fix: `romyq init` now creates everything inside the workspace directory
 - Fix: `romyq attach` now creates `mission.md` inside the workspace directory when a path is specified
-- Fix: version fallback changed from hardcoded `"0.1.0"` to `"0.0.0+unknown"` so misconfigured installs are clearly visible
-- Add: `romyq version` subcommand — shows version, install type (editable vs wheel), and Python version
+- Fix: version fallback changed from hardcoded `"0.1.0"` to `"0.0.0+unknown"`
+- Add: `romyq version` subcommand — shows version, install type, and Python version
 - Add: regression tests for the init flow (`tests/test_init_flow.py`)
 
 ## 0.1.0 — Initial alpha
