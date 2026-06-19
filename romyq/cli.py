@@ -1303,6 +1303,150 @@ def cmd_patterns(args: argparse.Namespace) -> None:
     print()
 
 
+# ── rules ─────────────────────────────────────────────────────────────────────
+
+def cmd_rules(args: argparse.Namespace) -> None:
+    """Manage project rules."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .rules import (
+        add_rule, remove_rule, list_rules as list_active_rules,
+        format_rules, rules_text,
+    )
+    from .steering import candidate_promotions
+    from .events import emit as ev_emit
+    from . import events as ev_mod
+
+    r_path = store.rules_path(workspace_path)
+    e_path = store.events_path(workspace_path)
+
+    action = getattr(args, "action", "list") or "list"
+
+    if action == "add":
+        text = " ".join(getattr(args, "text_parts", []))
+        if not text:
+            print("Error: rule text cannot be empty.")
+            print("Usage: romyq rules add \"Never use SQLite\"")
+            sys.exit(1)
+        rule_id = add_rule(r_path, text)
+        ev_emit(e_path, ev_mod.RULE_ADDED, rule_id=rule_id, text=text[:100])
+        try:
+            from .decisions import record as record_decision
+            record_decision(store.decisions_path(workspace_path), "rule_added", text)
+        except Exception:
+            pass
+        print(f"Rule added [{rule_id}]: {text}")
+
+    elif action == "remove":
+        text = " ".join(getattr(args, "text_parts", []))
+        if not text:
+            print("Error: rule ID or text required.")
+            print("Usage: romyq rules remove <id_or_text>")
+            sys.exit(1)
+        removed = remove_rule(r_path, text)
+        if removed:
+            ev_emit(e_path, ev_mod.RULE_REMOVED, text=text[:100])
+            try:
+                from .decisions import record as record_decision
+                record_decision(store.decisions_path(workspace_path), "rule_removed", text)
+            except Exception:
+                pass
+            print(f"Rule removed: {text}")
+        else:
+            print(f"No active rule found matching: {text}")
+            sys.exit(1)
+
+    else:
+        # List active rules + promotion suggestions
+        if getattr(args, "json", False):
+            active = list_active_rules(r_path)
+            suggestions = candidate_promotions(e_path)
+            print(_json.dumps({
+                "rules": active,
+                "promotion_suggestions": suggestions,
+            }, indent=2))
+            return
+
+        print(f"romyq rules: {root}\n")
+        active = list_active_rules(r_path)
+        if active:
+            print(f"  {len(active)} active rule(s):\n")
+            print(format_rules(r_path))
+        else:
+            print("  No rules defined.")
+            print("  Add one with: romyq rules add \"Never use SQLite\"")
+
+        suggestions = candidate_promotions(e_path)
+        if suggestions:
+            print(f"\n  Promotion suggestions (repeated operator instructions):")
+            for s in suggestions[:5]:
+                print(f"    → {s}")
+            print("\n  Promote with: romyq rules add \"<suggestion>\"")
+        print()
+
+
+# ── decisions ─────────────────────────────────────────────────────────────────
+
+def cmd_decisions(args: argparse.Namespace) -> None:
+    """Show the governance decision log."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .decisions import recent as recent_decisions, count as decisions_count, count_by_type as dec_by_type
+
+    d_path = store.decisions_path(workspace_path)
+    limit = getattr(args, "last", 20)
+
+    if getattr(args, "json", False):
+        entries = recent_decisions(d_path, limit=limit)
+        print(_json.dumps(entries, indent=2))
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq decisions: {root}")
+
+    total = decisions_count(d_path)
+    by_type = dec_by_type(d_path)
+
+    section("Summary")
+    print(f"  Total decisions: {total}")
+    if by_type:
+        for t, c in sorted(by_type.items(), key=lambda x: -x[1]):
+            print(f"    {t}: {c}")
+
+    section(f"Recent Decisions (last {limit})")
+    entries = recent_decisions(d_path, limit=limit)
+    if entries:
+        for d in entries:
+            ts = d.get("timestamp", "")[:19].replace("T", " ")
+            type_ = d.get("type", "?")
+            detail = d.get("detail", "")[:80]
+            print(f"  [{ts}] {type_}: {detail}")
+    else:
+        print("  No decisions recorded yet.")
+    print()
+
+
 # ── learn ─────────────────────────────────────────────────────────────────────
 
 def cmd_learn(args: argparse.Namespace) -> None:
@@ -1350,6 +1494,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
         history_path=store.history_path(workspace_path),
         events_path=store.events_path(workspace_path),
         memory_path=store.memory_path(workspace_path),
+        decisions_path=store.decisions_path(workspace_path),
     )
 
     if getattr(args, "json", False):
@@ -1385,6 +1530,13 @@ def cmd_stats(args: argparse.Namespace) -> None:
         row("Avg attempts/task:", f"{m.avg_attempts_per_task:.2f}")
         row("Blocked-task rate:", f"{m.blocked_task_rate * 100:.1f}%")
         row("Planner loops:", str(m.planner_loop_count))
+
+    print()
+    print("  Governance:")
+    row("Rules triggered:", str(m.rules_triggered))
+    row("Guardrails triggered:", str(m.guardrails_triggered))
+    row("Decisions recorded:", str(m.decisions_recorded))
+    row("Plan repairs:", str(m.plan_repairs))
 
 
 # ── timeline ──────────────────────────────────────────────────────────────────
@@ -1762,6 +1914,52 @@ def main() -> None:
         help="Output patterns as JSON",
     )
     p_patterns.set_defaults(func=cmd_patterns)
+
+    p_rules = sub.add_parser("rules", help="Manage project governance rules")
+    p_rules.add_argument(
+        "action",
+        nargs="?",
+        choices=["add", "remove", "list"],
+        default="list",
+        help="Action: add, remove, or list (default: list)",
+    )
+    p_rules.add_argument(
+        "text_parts",
+        nargs="*",
+        help="Rule text (for add/remove)",
+    )
+    p_rules.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_rules.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output as JSON",
+    )
+    p_rules.set_defaults(func=cmd_rules)
+
+    p_decisions = sub.add_parser("decisions", help="Show the governance decision log")
+    p_decisions.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_decisions.add_argument(
+        "--last", type=int, default=20, metavar="N",
+        help="Number of decisions to show (default: 20)",
+    )
+    p_decisions.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output as JSON",
+    )
+    p_decisions.set_defaults(func=cmd_decisions)
 
     p_learn = sub.add_parser("learn", help="Generate or refresh .romyq/context.md from static analysis")
     p_learn.add_argument(

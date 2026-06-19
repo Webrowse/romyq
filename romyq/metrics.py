@@ -33,6 +33,11 @@ class LoopMetrics(NamedTuple):
     avg_attempts_per_task: float = 0.0  # average execution attempts per unique task
     blocked_task_rate: float = 0.0      # fraction of total tasks that were blocked
     planner_loop_count: int = 0         # number of loop patterns detected
+    # ── governance metrics (0.8.0) ────────────────────────────────────────────
+    guardrails_triggered: int = 0       # knowledge guardrail events
+    rules_triggered: int = 0            # rule guardrail events
+    decisions_recorded: int = 0         # total decisions in decisions.json
+    plan_repairs: int = 0               # plan_repaired events
 
 
 def _ts_to_dt(ts: str) -> datetime | None:
@@ -79,6 +84,7 @@ def compute(
     history_path: str,
     events_path: str,
     memory_path: str = "",
+    decisions_path: str = "",
 ) -> LoopMetrics:
     """Compute all metrics from current state, history, events, and (optionally) memory."""
     tasks_completed = state.get("tasks_completed", 0)
@@ -122,6 +128,18 @@ def compute(
         except Exception:
             pass
 
+    # Governance metrics
+    guardrails_triggered = counts.get("guardrail_triggered", 0)
+    rules_triggered = counts.get("rule_triggered", 0)
+    plan_repairs = counts.get("plan_repaired", 0)
+    decisions_recorded = 0
+    if decisions_path:
+        try:
+            from .decisions import count as decisions_count
+            decisions_recorded = decisions_count(decisions_path)
+        except Exception:
+            pass
+
     return LoopMetrics(
         tasks_completed=tasks_completed,
         tasks_blocked=tasks_blocked,
@@ -139,4 +157,8 @@ def compute(
         avg_attempts_per_task=mem_avg_attempts,
         blocked_task_rate=mem_blocked_rate,
         planner_loop_count=planner_loops,
+        guardrails_triggered=guardrails_triggered,
+        rules_triggered=rules_triggered,
+        decisions_recorded=decisions_recorded,
+        plan_repairs=plan_repairs,
     )

@@ -168,6 +168,8 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
     mem_path = store.memory_path(workspace_path)
     know_path = store.knowledge_path(workspace_path)
     plan_path = store.plan_path(workspace_path)
+    rules_path = store.rules_path(workspace_path)
+    decisions_path = store.decisions_path(workspace_path)
 
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(60 * 30)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
@@ -435,7 +437,7 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                 save_state(state, s_path)
                 continue
 
-            # Guardrail check: reject tasks matching known failure patterns
+            # Knowledge guardrail check
             try:
                 from .planning_guardrails import validate_task_against_knowledge
                 from . import events as _ev_mod
@@ -445,6 +447,29 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                     emit(e_path, _ev_mod.GUARDRAIL_TRIGGERED,
                          fingerprint=violation.fingerprint,
                          reason=violation.reason[:200])
+            except Exception:
+                pass
+
+            # Rule guardrail check: reject tasks violating project rules
+            try:
+                from .rule_guardrails import check_task_against_rules, build_rule_violation_context
+                from .decisions import record as record_decision
+                rule_violation = check_task_against_rules(task, rules_path)
+                if rule_violation:
+                    activity.log(
+                        f"Rule guardrail triggered: '{rule_violation.violated_rule[:60]}' — replanning."
+                    )
+                    emit(e_path, ev.RULE_TRIGGERED,
+                         rule_id=rule_violation.rule_id,
+                         rule=rule_violation.violated_rule[:100],
+                         task_preview=rule_violation.task_preview)
+                    record_decision(
+                        decisions_path, "task_rejected",
+                        f"Rule violated: {rule_violation.violated_rule}",
+                        task=rule_violation.task_preview,
+                        rule_id=rule_violation.rule_id,
+                    )
+                    continue  # ask planner for a different task
             except Exception:
                 pass
 
@@ -475,6 +500,26 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
 
         # ── approval mode ─────────────────────────────────────────────────────
         if approval_mode and not in_diagnosis and pending_task is None:
+            # Rule-aware approval: show relevant rules and lessons
+            try:
+                from .rule_guardrails import relevant_rules as _relevant_rules
+                from . import knowledge as _know_mod
+                _rules_for_task = _relevant_rules(task, rules_path)
+                _lessons = _know_mod.load(know_path).get("lessons", [])[:3]
+                if _rules_for_task or _lessons:
+                    print("\n── Governance Context ─────────────────────────────")
+                    if _rules_for_task:
+                        print("  Rules relevant to this task:")
+                        for r in _rules_for_task:
+                            print(f"    • {r}")
+                    if _lessons:
+                        print("  Recent lessons:")
+                        for l in _lessons[:3]:
+                            print(f"    • {l}")
+                    print("───────────────────────────────────────────────────")
+            except Exception:
+                pass
+
             decision = _approval_prompt(task)
             if decision == "reject":
                 activity.log("Task rejected by operator — requesting new task from planner.")
@@ -709,6 +754,22 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
 
             emit(e_path, ev.RETRY, key=key, streak=same_task_streak,
                  consecutive=state.get("consecutive_failures", 0))
+
+            # Smart plan repair: regenerate failed task section if threshold met
+            try:
+                from .plan_repair import needs_repair, repair_plan as do_repair
+                from .decisions import record as record_decision
+                if needs_repair(h_path):
+                    mission_for_repair = load()
+                    do_repair(plan_path, api_key, mission_for_repair, h_path)
+                    emit(e_path, ev.PLAN_REPAIRED, trigger="consecutive_failures")
+                    record_decision(
+                        decisions_path, "plan_repaired",
+                        "Plan section regenerated after consecutive failures.",
+                    )
+                    activity.log("Smart plan repair triggered — failed tasks replaced.")
+            except Exception:
+                pass
 
             if state.get("consecutive_failures", 0) >= _CONSECUTIVE_THRESHOLD:
                 activity.log(

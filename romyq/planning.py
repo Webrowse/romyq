@@ -42,6 +42,7 @@ def build_planning_context(
     memory_path: str = "",
     knowledge_path: str = "",
     events_path: str = "",
+    rules_path: str = "",
 ) -> str:
     """Return a prompt section to inject into the DeepSeek planning prompt.
 
@@ -49,6 +50,7 @@ def build_planning_context(
     memory_path:     path to .romyq/memory.json (pass '' to omit).
     knowledge_path:  path to .romyq/knowledge.json (pass '' to omit).
     events_path:     path to .romyq/events.log for operator instructions (pass '' to omit).
+    rules_path:      path to .romyq/rules.json for project rules (pass '' to omit).
     """
     parts: list[str] = []
 
@@ -58,6 +60,13 @@ def build_planning_context(
         steer_ctx = steering_mod.instructions_text(events_path)
         if steer_ctx:
             parts.append(steer_ctx)
+
+    # ── Project rules (second highest priority, after operator instructions) ────
+    if rules_path:
+        from . import rules as rules_mod
+        r_text = rules_mod.rules_text(rules_path)
+        if r_text:
+            parts.append(r_text)
 
     # ── Repository memory ─────────────────────────────────────────────────────
     if context_text.strip():

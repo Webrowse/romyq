@@ -37,6 +37,11 @@ OPERATOR_INSTRUCTION = "operator_instruction"
 TASK_APPROVED = "task_approved"
 TASK_REJECTED = "task_rejected"
 GUARDRAIL_TRIGGERED = "guardrail_triggered"
+RULE_TRIGGERED = "rule_triggered"
+RULE_ADDED = "rule_added"
+RULE_REMOVED = "rule_removed"
+PLAN_REPAIRED = "plan_repaired"
+DECISION_RECORDED = "decision_recorded"
 
 
 # ── core operations ───────────────────────────────────────────────────────────

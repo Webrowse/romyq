@@ -68,6 +68,9 @@ That's it. Romyq takes over from here.
 | `romyq run --approval` | Prompt for approval before each Claude execution |
 | `romyq note "message"` | Inject a steering note into the next task |
 | `romyq steer "instruction"` | Send a live operator instruction to the planner |
+| `romyq rules` | List active project rules and promotion suggestions |
+| `romyq rules add "TEXT"` | Add a project rule (e.g. "Never use SQLite") |
+| `romyq rules remove "TEXT"` | Remove a project rule by text or ID |
 | `romyq pause` | Pause the loop after the current task finishes |
 | `romyq resume` | Resume a paused loop |
 | `romyq stop` | Request graceful shutdown after the current task |
@@ -94,6 +97,7 @@ That's it. Romyq takes over from here.
 | `romyq knowledge [--json]` | Knowledge base: synthesized lessons and extracted patterns |
 | `romyq patterns [--json]` | Extracted failure and success patterns from the knowledge base |
 | `romyq plan [--json]` | Show the current mission task plan with status |
+| `romyq decisions [--json]` | Show the governance decision log |
 | `romyq explain` | Full diagnostic picture: state, failures, recovery guidance |
 
 **Meta**

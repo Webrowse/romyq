@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.8.0
+
+**Project rules and governance — Romyq enforces constraints automatically.**
+
+**Project Rules (`romyq/rules.py` + `.romyq/rules.json`):**
+- Add: Persistent project rules at `.romyq/rules.json`. Structure: `{version, rules: [{id, text, active, created_at, source}]}`.
+- Add: `add_rule(path, text, source)` — adds rule; returns ID; deduplicates on active rule text; validates source (`manual` or `promoted`).
+- Add: `remove_rule(path, id_or_text)` — deactivates rule by ID or text; preserves historical record.
+- Add: `list_rules(path)` — returns active rules only.
+- Add: `rules_text(path)` — formats active rules into a prompt section; injected second in planning context (after operator instructions).
+- Add: `romyq rules` — list active rules and promotion suggestions.
+- Add: `romyq rules add "TEXT"` — add a rule; emits `rule_added` event and records decision.
+- Add: `romyq rules remove "TEXT_OR_ID"` — deactivate a rule; emits `rule_removed` event and records decision.
+
+**Rule Guardrails (`romyq/rule_guardrails.py`):**
+- Add: `RuleViolation` NamedTuple: `(task_preview, violated_rule, rule_id)`.
+- Add: `check_task_against_rules(task, rules_path)` — rejects tasks matching blocking rules (prefixes: Never, Avoid, Do not, Don't). Advisory rules (Always, Require, Prefer, Backend first) are injected into the planner but do not block.
+- Add: `build_rule_violation_context(violation)` — formats rejection prompt for replanning.
+- Add: `relevant_rules(task, rules_path)` — returns rules whose keywords appear in the task (used in rule-aware approval mode).
+- Update: Loop rejects rule-violating tasks with `continue` (hard block, not advisory). Emits `rule_triggered` event and records `task_rejected` decision.
+
+**Steering Promotion (`romyq/steering.py`):**
+- Add: `PROMOTION_THRESHOLD = 3` constant.
+- Add: `candidate_promotions(events_path, threshold)` — returns instruction texts that appear ≥ threshold times in the event log. These are candidates for promotion to permanent rules.
+- Update: `romyq rules` displays promotion suggestions.
+
+**Decision Log (`romyq/decisions.py` + `.romyq/decisions.json`):**
+- Add: Decision log persisted as a JSON array at `.romyq/decisions.json`, capped at 1 000 entries.
+- Add: `record(path, type_, detail, **context)` — appends a decision with unique ID, timestamp, and optional context dict. Never raises.
+- Add: `recent(path, limit)` — returns newest decisions first.
+- Add: `count(path)`, `count_by_type(path)`, `format_decisions(path)`.
+- Add: Decision types: `rule_added`, `rule_removed`, `task_rejected`, `planner_override`, `operator_intervention`, `plan_repaired`, `rule_triggered`.
+- Add: `romyq decisions [--json] [--last N]` CLI command.
+
+**Mission Health Score (`romyq/health_score.py`):**
+- Add: `compute_health_score(history_path, events_path, state)` — 0–100 composite score. Inputs: success rate (up to −30), consecutive failures (up to −20), blocked tasks (up to −15), guardrails triggered (up to −15), crash recovery bonus (+5).
+- Add: `format_health_score(health)` — one-line summary string.
+- Add: Grades: A (85+), B (70+), C (55+), D (40+), F (<40).
+
+**Smart Plan Repair (`romyq/plan_repair.py`):**
+- Add: `needs_repair(history_path, window, threshold)` — returns True when ≥ threshold of last `window` tasks failed (default: 3 of 5).
+- Add: `repair_plan(plan_path, api_key, mission, history_path)` — marks recently failed plan tasks as skipped; asks DeepSeek to generate replacement tasks; appends them as pending. Never raises; returns existing plan unchanged on API error.
+- Update: Loop triggers plan repair automatically after consecutive failures and records a `plan_repaired` decision.
+
+**Knowledge Application Metrics (`romyq/metrics.py`):**
+- Update: `LoopMetrics` adds: `guardrails_triggered`, `rules_triggered`, `decisions_recorded`, `plan_repairs`.
+- Update: `compute()` accepts `decisions_path` parameter.
+- Update: `romyq stats` displays Governance section: rules triggered, guardrails triggered, decisions recorded, plan repairs.
+
+**New Events (`romyq/events.py`):**
+- Add: `RULE_TRIGGERED`, `RULE_ADDED`, `RULE_REMOVED`, `PLAN_REPAIRED`, `DECISION_RECORDED` constants.
+
+**Store (`romyq/store.py`):**
+- Add: `rules_path(workspace)` returning `.romyq/rules.json`.
+- Add: `decisions_path(workspace)` returning `.romyq/decisions.json`.
+
+**Rule-Aware Approval Mode:**
+- Update: `romyq run --approval` now shows relevant rules and recent lessons before each approval prompt.
+
+**Testing:**
+- Add: `tests/test_rules.py` — 38 tests for rules CRUD, `rules_text`, `format_rules`.
+- Add: `tests/test_rule_guardrails.py` — 29 tests for `_extract_blocker_term`, `check_task_against_rules`, `build_rule_violation_context`, `relevant_rules`.
+- Add: `tests/test_decisions.py` — 30 tests for decision log CRUD, `recent`, `count_by_type`, `format_decisions`.
+- Add: `tests/test_plan_repair.py` — 18 tests for `needs_repair`, `recent_failures`, `_parse_repair_tasks`, `repair_plan`.
+- Add: `tests/test_health_score.py` — 22 tests for `compute_health_score`, `_grade`, `format_health_score`.
+- Tests: 748 → 885 (+137).
+
 ## 0.7.0
 
 **Interactive AI project management — live steering, plan decomposition, and guardrails.**

@@ -55,3 +55,23 @@ def instruction_count(events_path: str) -> int:
     from .events import tail
     events = tail(events_path, n=10_000)
     return sum(1 for e in events if e.get("event") == OPERATOR_INSTRUCTION)
+
+
+PROMOTION_THRESHOLD = 3
+
+
+def candidate_promotions(events_path: str, threshold: int = PROMOTION_THRESHOLD) -> list[str]:
+    """Return instruction texts that appear >= threshold times.
+
+    These are candidates for promotion to permanent project rules.
+    """
+    from collections import Counter
+    from .events import tail
+    events = tail(events_path, n=1000)
+    texts = [
+        e.get("instruction", "").strip()
+        for e in events
+        if e.get("event") == OPERATOR_INSTRUCTION
+    ]
+    counts: Counter[str] = Counter(t for t in texts if t)
+    return [text for text, count in counts.most_common() if count >= threshold]
