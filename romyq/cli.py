@@ -823,6 +823,7 @@ def cmd_planning(args: argparse.Namespace) -> None:
 
     ctx_text = ctx_load(workspace_path)
     mem_path = store.memory_path(workspace_path)
+    know_path = store.knowledge_path(workspace_path)
 
     planning_ctx = build_planning_context(
         state=state,
@@ -830,14 +831,27 @@ def cmd_planning(args: argparse.Namespace) -> None:
         history_path=store.history_path(workspace_path),
         context_text=ctx_text,
         memory_path=mem_path,
+        knowledge_path=know_path,
     )
 
     loop_warnings = detect_planner_loops(mem_path) if Path(mem_path).exists() else []
 
     # Repeated-task warnings from memory
     from . import memory as mem_mod
+    from . import knowledge as know_mod
     top_failed = mem_mod.most_failed(mem_path, limit=5) if Path(mem_path).exists() else []
     repeated = [(fp, cnt, preview) for fp, cnt, preview, _ in top_failed if cnt >= 2]
+
+    # Memory signals
+    sr = mem_mod.overall_success_rate(mem_path) if Path(mem_path).exists() else -1.0
+    rr = mem_mod.retry_rate(mem_path) if Path(mem_path).exists() else 0.0
+    avg_att = mem_mod.avg_attempts_per_task(mem_path) if Path(mem_path).exists() else 0.0
+
+    # Knowledge signals
+    know_data = know_mod.load(know_path)
+    know_lessons = know_data.get("lessons", [])
+    know_stale = know_mod.is_stale(know_path, mem_path, store.history_path(workspace_path), ctx_text)
+    know_failures = know_mod.top_failure_patterns(know_path, limit=3)
 
     if getattr(args, "json", False):
         print(_json.dumps({
@@ -853,6 +867,24 @@ def cmd_planning(args: argparse.Namespace) -> None:
                 "attempts": state.get("current_task_attempts", 0),
                 "ceiling": state.get("max_task_attempts", 3),
                 "reason": state.get("last_failure_reason", ""),
+            },
+            "memory_signals": {
+                "success_rate": sr,
+                "retry_rate": rr,
+                "avg_attempts_per_task": avg_att,
+                "most_failed": [
+                    {"fp": fp, "count": cnt, "preview": prev}
+                    for fp, cnt, prev, _ in top_failed
+                ],
+            },
+            "knowledge_signals": {
+                "fresh": not know_stale,
+                "lesson_count": len(know_lessons),
+                "top_failure_patterns": know_failures,
+            },
+            "repository_signals": {
+                "context_present": bool(ctx_text.strip()),
+                "structure_hash": know_data.get("structure_hash", ""),
             },
         }, indent=2))
         return
@@ -871,6 +903,36 @@ def cmd_planning(args: argparse.Namespace) -> None:
             print(f"  {line}")
     else:
         print("  (not yet generated — run 'romyq learn')")
+
+    section("Memory Signals")
+    W = 26
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    if sr >= 0:
+        row("Success rate:", f"{sr * 100:.1f}%")
+    else:
+        row("Success rate:", "n/a")
+    row("Retry rate:", f"{rr * 100:.1f}%")
+    row("Avg attempts/task:", f"{avg_att:.2f}")
+    if top_failed:
+        fp0, cnt0, prev0, _ = top_failed[0]
+        row("Most failed task:", f"[{cnt0}x] {prev0[:50]}")
+
+    section("Knowledge Signals")
+    row("Status:", "stale — will refresh on next run" if know_stale else f"fresh ({len(know_lessons)} lessons)")
+    if know_failures:
+        for p in know_failures:
+            cnt = p.get("count", 0)
+            prev = p.get("task_preview", "")[:55]
+            print(f"  [{cnt}x] {prev}")
+    else:
+        row("Top failures:", "none")
+
+    section("Repository Signals")
+    row("Context present:", "yes" if ctx_text.strip() else "no — run 'romyq learn'")
+    row("Knowledge hash:", know_data.get("structure_hash", "(none)") or "(none)")
 
     section("Planning Context")
     if planning_ctx:
@@ -996,6 +1058,175 @@ def cmd_memory(args: argparse.Namespace) -> None:
             print(f"    total={rec['total']}  ok={rec['ok']}  blocked={rec['blocked']}")
     else:
         print("  No mission outcomes recorded.")
+
+    print()
+
+
+# ── knowledge ─────────────────────────────────────────────────────────────────
+
+def cmd_knowledge(args: argparse.Namespace) -> None:
+    """Show knowledge base summary: lessons, failure patterns, freshness."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from . import knowledge as know_mod
+
+    know_path = store.knowledge_path(workspace_path)
+    mem_path = store.memory_path(workspace_path)
+    h_path = store.history_path(workspace_path)
+    from .context import load as ctx_load
+    ctx_text = ctx_load(workspace_path)
+
+    data = know_mod.load(know_path)
+    stale = know_mod.is_stale(know_path, mem_path, h_path, ctx_text)
+    lessons = data.get("lessons", [])
+    patterns = data.get("patterns", [])
+    failures = [p for p in patterns if p.get("type") == "failure_pattern"]
+    successes = [p for p in patterns if p.get("type") == "success_pattern"]
+    generated_at = data.get("generated_at", "")
+
+    if getattr(args, "json", False):
+        print(_json.dumps({
+            "generated_at": generated_at,
+            "stale": stale,
+            "lesson_count": len(lessons),
+            "failure_pattern_count": len(failures),
+            "success_pattern_count": len(successes),
+            "lessons": lessons,
+            "failure_patterns": failures,
+            "success_patterns": successes,
+        }, indent=2))
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq knowledge: {root}")
+
+    section("Knowledge Base")
+    W = 24
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    if generated_at:
+        row("Generated:", generated_at[:19].replace("T", " ") + " UTC")
+        row("Status:", "stale — run 'romyq run' to refresh" if stale else "fresh")
+    else:
+        row("Generated:", "(not yet generated — run 'romyq run')")
+        row("Status:", "absent")
+    row("Lessons:", str(len(lessons)))
+    row("Failure patterns:", str(len(failures)))
+    row("Success patterns:", str(len(successes)))
+
+    section("Lessons")
+    if lessons:
+        for i, lesson in enumerate(lessons, 1):
+            print(f"  {i}. {lesson}")
+    else:
+        print("  None. Run 'romyq run' to populate the knowledge base.")
+
+    section("Failure Patterns")
+    if failures:
+        sorted_failures = sorted(failures, key=lambda p: p.get("count", 0), reverse=True)
+        for p in sorted_failures[:10]:
+            count = p.get("count", 0)
+            preview = p.get("task_preview", "")[:65]
+            fp = p.get("fingerprint", "")[:8]
+            reason = p.get("last_reason", "")[:60]
+            print(f"  [{count}x]  {preview}  (fp:{fp})")
+            if reason:
+                print(f"         last: {reason}")
+    else:
+        print("  None.")
+
+    section("Success Patterns")
+    if successes:
+        sorted_successes = sorted(successes, key=lambda p: p.get("count", 0), reverse=True)
+        for p in sorted_successes[:5]:
+            count = p.get("count", 0)
+            preview = p.get("task_preview", "")[:65]
+            print(f"  [{count}x]  {preview}")
+    else:
+        print("  None.")
+
+    print()
+
+
+# ── patterns ──────────────────────────────────────────────────────────────────
+
+def cmd_patterns(args: argparse.Namespace) -> None:
+    """Show extracted failure and success patterns from the knowledge base."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from . import knowledge as know_mod
+
+    know_path = store.knowledge_path(workspace_path)
+    data = know_mod.load(know_path)
+    patterns = data.get("patterns", [])
+    failures = know_mod.top_failure_patterns(know_path)
+    successes = know_mod.top_success_patterns(know_path)
+    generated_at = data.get("generated_at", "")
+
+    if getattr(args, "json", False):
+        print(_json.dumps({
+            "generated_at": generated_at,
+            "total_patterns": len(patterns),
+            "failure_patterns": failures,
+            "success_patterns": successes,
+        }, indent=2))
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq patterns: {root}")
+    if generated_at:
+        print(f"  (knowledge generated: {generated_at[:19].replace('T', ' ')} UTC)")
+
+    section("Failure Patterns")
+    if failures:
+        for i, p in enumerate(failures, 1):
+            count = p.get("count", 0)
+            preview = p.get("task_preview", "")[:70]
+            fp = p.get("fingerprint", "")
+            reason = p.get("last_reason", "")[:80]
+            print(f"  {i}. [{count}x]  {preview}")
+            print(f"     fp: {fp}  last: {reason or '(unknown)'}")
+    else:
+        print("  No failure patterns recorded.")
+
+    section("Success Patterns")
+    if successes:
+        for i, p in enumerate(successes, 1):
+            count = p.get("count", 0)
+            preview = p.get("task_preview", "")[:70]
+            fp = p.get("fingerprint", "")
+            print(f"  {i}. [{count}x]  {preview}")
+            print(f"     fp: {fp}")
+    else:
+        print("  No success patterns recorded.")
 
     print()
 
@@ -1386,6 +1617,36 @@ def main() -> None:
         help="Output memory analysis as JSON",
     )
     p_memory.set_defaults(func=cmd_memory)
+
+    p_knowledge = sub.add_parser("knowledge", help="Show knowledge base: lessons, patterns, freshness")
+    p_knowledge.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_knowledge.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output knowledge as JSON",
+    )
+    p_knowledge.set_defaults(func=cmd_knowledge)
+
+    p_patterns = sub.add_parser("patterns", help="Show extracted failure and success patterns")
+    p_patterns.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Path to the workspace (default: current directory or $ROMYQ_WORKSPACE)",
+    )
+    p_patterns.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output patterns as JSON",
+    )
+    p_patterns.set_defaults(func=cmd_patterns)
 
     p_learn = sub.add_parser("learn", help="Generate or refresh .romyq/context.md from static analysis")
     p_learn.add_argument(

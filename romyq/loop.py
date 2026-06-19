@@ -168,6 +168,7 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
     prune_events(e_path, max_entries=_max_events)
 
     # Auto-generate .romyq/context.md if absent (or if ROMYQ_REFRESH_CONTEXT=1).
+    _ctx_text = ""
     try:
         from . import context as _ctx_mod
         from .store import context_path as _ctx_path_fn
@@ -177,6 +178,29 @@ def run(workspace_path: str, until_complete: bool = False) -> None:
         if _refresh or not _pathlib.Path(_ctx_path).exists():
             _ctx_mod.write(workspace_path)
             activity.log("Repository context written to .romyq/context.md")
+        _ctx_text = _ctx_mod.load(workspace_path)
+    except Exception:
+        pass
+
+    # Refresh .romyq/knowledge.json if stale (or if ROMYQ_REFRESH_CONTEXT=1).
+    try:
+        from . import knowledge as _know_mod
+        from .store import knowledge_path as _know_path_fn
+        _know_path = _know_path_fn(workspace_path)
+        _refresh_know = (
+            os.getenv("ROMYQ_REFRESH_CONTEXT", "0") == "1"
+            or _know_mod.is_stale(_know_path, mem_path, store.history_path(workspace_path), _ctx_text)
+        )
+        if _refresh_know:
+            _know_mod.write(
+                _know_path,
+                mem_path,
+                store.history_path(workspace_path),
+                e_path,
+                _ctx_text,
+            )
+            emit(e_path, ev.CONTEXT_REFRESHED)
+            activity.log("Knowledge base refreshed: .romyq/knowledge.json")
     except Exception:
         pass
 

@@ -34,6 +34,76 @@ def detect_planner_loops(
     return [p.description for p in patterns]
 
 
+_STALE_CONTEXT_DAYS = 7          # context.md older than this → warning
+_RECURRING_FAILURE_MIN = 5       # same reason in last 10 failures → warning
+
+
+def detect_stale_artifacts(
+    workspace_path: str,
+    memory_path: str = "",
+    history_path: str = "",
+    context_text: str = "",
+) -> list[str]:
+    """Check for stale context.md and knowledge.json.
+
+    Returns a list of warning strings; empty list means no staleness.
+    """
+    import pathlib
+    from . import store
+
+    warnings: list[str] = []
+
+    ctx_path = store.context_path(workspace_path)
+    if not pathlib.Path(ctx_path).exists():
+        warnings.append(
+            "context.md is absent — run 'romyq learn' to generate repository memory."
+        )
+    else:
+        import time
+        age_s = time.time() - pathlib.Path(ctx_path).stat().st_mtime
+        age_days = age_s / 86400
+        if age_days > _STALE_CONTEXT_DAYS:
+            warnings.append(
+                f"context.md is {int(age_days)} days old — run 'romyq learn' to refresh."
+            )
+
+    know_path = store.knowledge_path(workspace_path)
+    if memory_path or history_path:
+        from . import knowledge as know_mod
+        if know_mod.is_stale(know_path, memory_path or "", history_path or "", context_text):
+            warnings.append(
+                "knowledge.json is stale — knowledge will be refreshed on next 'romyq run'."
+            )
+
+    return warnings
+
+
+def detect_recurring_failures(history_path: str, window: int = 10, threshold: int = 5) -> list[str]:
+    """Detect a single failure reason dominating the recent history.
+
+    Returns a warning string if threshold out of the last window failures share
+    the same root cause.  Returns [] when history is healthy.
+    """
+    warnings: list[str] = []
+    recent_entries = history_recent(limit=window, path=history_path)
+    failed = [e for e in recent_entries if not e.get("success")]
+    if len(failed) < threshold:
+        return warnings
+    reason_counts: dict[str, int] = {}
+    for e in failed:
+        r = e.get("validation_reason", "")
+        if r:
+            reason_counts[r] = reason_counts.get(r, 0) + 1
+    for reason, count in reason_counts.items():
+        if count >= threshold:
+            preview = reason[:80].replace("\n", " ")
+            warnings.append(
+                f"Excessive recurring failures: '{preview}' seen {count} times "
+                f"in the last {len(failed)} failures."
+            )
+    return warnings
+
+
 def detect_stuck_conditions(
     state: dict,
     history_path: str,
@@ -134,5 +204,9 @@ def detect_stuck_conditions(
     if memory_path:
         loop_warnings = detect_planner_loops(memory_path)
         warnings.extend(loop_warnings)
+
+    # ── 7. Excessive recurring failures ───────────────────────────────────────
+    recurring = detect_recurring_failures(history_path)
+    warnings.extend(recurring)
 
     return warnings

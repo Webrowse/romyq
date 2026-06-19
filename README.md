@@ -77,6 +77,19 @@ That's it. Romyq takes over from here.
 | `romyq status` | Raw state: current task, last commit, heartbeat timestamp |
 | `romyq logs` | Per-task history with success/failure and validation reason |
 | `romyq info` | Detected language, frameworks, test suite, and build commands |
+| `romyq stats [--json]` | Long-run operational statistics: tasks, validator rates, runtime |
+| `romyq timeline [--last N] [--json]` | Human-readable event timeline |
+
+**Intelligence & Diagnostics**
+
+| Command | Description |
+|---|---|
+| `romyq learn` | Generate or refresh `.romyq/context.md` from static analysis |
+| `romyq planning [--json]` | Planning diagnostics: memory signals, knowledge signals, loop detection |
+| `romyq memory [--json]` | Execution memory: failure rates, retry patterns, mission outcomes |
+| `romyq knowledge [--json]` | Knowledge base: synthesized lessons and extracted patterns |
+| `romyq patterns [--json]` | Extracted failure and success patterns from the knowledge base |
+| `romyq explain` | Full diagnostic picture: state, failures, recovery guidance |
 
 **Meta**
 

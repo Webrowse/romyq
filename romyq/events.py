@@ -31,6 +31,7 @@ RATE_LIMIT_RECOVERED = "rate_limit_recovered"
 CRASH_RECOVERED = "crash_recovered"
 PHASE_CHANGED = "phase_changed"
 CLAUDE_CANCELLED = "claude_cancelled"
+CONTEXT_REFRESHED = "context_refreshed"
 
 
 # ── core operations ───────────────────────────────────────────────────────────

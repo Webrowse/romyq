@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.6.0
+
+**Knowledge extraction and planning intelligence — the planner receives synthesized lessons, not raw history.**
+
+**Knowledge Base (`romyq/knowledge.py` + `.romyq/knowledge.json`):**
+- Add: Persistent knowledge base at `.romyq/knowledge.json`. Structure: `{ version, generated_at, structure_hash, patterns, lessons }`.
+- Add: `generate()` — extracts failure patterns, success patterns, and synthesized lessons from memory.json, history.json, events.log, and context.md. Never raises; returns empty structure on any error.
+- Add: `write()` — atomically writes `.romyq/knowledge.json` (tmp + fsync + os.replace). Returns path.
+- Add: `load()` — loads knowledge.json; silently returns empty structure on missing or corrupt file.
+- Add: `is_stale()` — computes `structure_hash(context_text[:500] + memory_entry_count + history_entry_count)` and returns True if the stored hash differs. Fast staleness check with no I/O beyond reading counts.
+- Add: `lessons_text()` — formats synthesized lessons into a numbered prompt section for DeepSeek injection. Returns '' when no lessons exist.
+- Add: `top_failure_patterns()` / `top_success_patterns()` — return patterns sorted by count, filtered by type.
+
+**Pattern Extraction:**
+- Add: Failure patterns extracted from `most_failed()` in execution memory (count ≥ 2). Each pattern records: fingerprint, task preview, failure count, last reason.
+- Add: Success patterns extracted from `memory.json` entries with `out == "SUCCESS"`, grouped by fingerprint.
+- Add: Lessons synthesized from: recurring failure patterns (up to 8), rate-limit frequency (events.log), repeated same-reason failures (history.json), and detected conventions from context.md (mypy, ruff, pytest, pre-commit).
+
+**Planner Lessons (planning context injection):**
+- Update: `build_planning_context()` accepts `knowledge_path` parameter (defaults to '').
+- Update: When `knowledge_path` is provided, injects `lessons_text()` between Repository Context and Execution Memory sections in the DeepSeek prompt.
+- Update: `manager.generate_task()` passes `knowledge_path` to `build_planning_context()`.
+
+**Knowledge Freshness:**
+- Add: At loop startup, `is_stale()` is called after context.md is loaded. If stale (or `ROMYQ_REFRESH_CONTEXT=1`), `write()` regenerates knowledge.json and emits a `context_refreshed` event.
+- Add: `events.CONTEXT_REFRESHED = "context_refreshed"` event type constant.
+- Add: `store.knowledge_path(workspace)` returning `.romyq/knowledge.json` path.
+
+**New CLI Commands:**
+- Add: `romyq knowledge [--json]` — shows knowledge base summary: generated timestamp, freshness status, lesson count, pattern counts, all lessons, failure patterns (sorted by count), success patterns.
+- Add: `romyq patterns [--json]` — shows extracted failure and success patterns with fingerprints, counts, and last known reason.
+
+**Planning Diagnostics Enhancement:**
+- Update: `romyq planning [--json]` — adds three new sections:
+  - **Memory Signals**: success rate, retry rate, avg attempts/task, most-failed task preview.
+  - **Knowledge Signals**: knowledge freshness status, lesson count, top failure patterns.
+  - **Repository Signals**: whether context.md is present, current structure hash.
+- Update: JSON output for `romyq planning` includes `memory_signals`, `knowledge_signals`, and `repository_signals` keys.
+
+**Health Warnings:**
+- Add: `detect_stale_artifacts(workspace_path, ...)` — warns when context.md is absent or older than 7 days; warns when knowledge.json structure hash is stale.
+- Add: `detect_recurring_failures(history_path, window=10, threshold=5)` — warns when the same failure reason dominates ≥5 of the last 10 failures (regardless of consecutiveness).
+- Update: `detect_stuck_conditions()` now calls `detect_recurring_failures()` for health check #7.
+
+**Testing:**
+- Add: `tests/test_knowledge.py` — 64 tests covering load, structure_hash, is_stale, extract_failure_patterns, extract_success_patterns, synthesize_lessons, generate, write, lessons_text, top_failure_patterns, top_success_patterns.
+- Add: `tests/test_knowledge_cli.py` — 36 tests covering `romyq knowledge`, `romyq patterns`, and the enhanced `romyq planning` (memory signals, knowledge signals, repository signals sections).
+- Tests: 511 → 615 (+104).
+
 ## 0.5.0
 
 **Execution memory and failure-aware planning — Romyq now remembers its past mistakes.**

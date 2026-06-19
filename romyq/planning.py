@@ -40,17 +40,26 @@ def build_planning_context(
     max_findings: int = 20,
     max_failures: int = 10,
     memory_path: str = "",
+    knowledge_path: str = "",
 ) -> str:
     """Return a prompt section to inject into the DeepSeek planning prompt.
 
-    context_text: contents of .romyq/context.md (pass '' to omit).
-    memory_path:  path to .romyq/memory.json (pass '' to omit).
+    context_text:    contents of .romyq/context.md (pass '' to omit).
+    memory_path:     path to .romyq/memory.json (pass '' to omit).
+    knowledge_path:  path to .romyq/knowledge.json (pass '' to omit).
     """
     parts: list[str] = []
 
     # ── Repository memory ─────────────────────────────────────────────────────
     if context_text.strip():
         parts.append("## Repository Context\n\n" + context_text.strip())
+
+    # ── Knowledge base — synthesized lessons ─────────────────────────────────
+    if knowledge_path:
+        from . import knowledge as know_mod
+        know_ctx = know_mod.lessons_text(knowledge_path)
+        if know_ctx:
+            parts.append(know_ctx)
 
     # ── Execution memory — top failed tasks ──────────────────────────────────
     mem_ctx = build_memory_context(memory_path)
