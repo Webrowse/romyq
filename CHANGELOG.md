@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.10.0
+
+**Software lifecycle management — Romyq now manages phases, not just tasks.**
+
+**Complexity Profiles (`romyq/profile.py` + `.romyq/project_profile.json`):**
+- Add: Three complexity levels: `basic` (MVP, stop when software works), `intermediate` (proper architecture, tests, docs, CI), `advanced` (production-grade: security, CI/CD, monitoring, docs, deployment).
+- Add: Per-level configuration: `readiness_target` (60/75/90%), `done_criteria`, `min_phases`, requirement flags for security, docs, CI, deployment, and testing.
+- Add: `set_complexity(path, level)`, `get_complexity(path)`, `config(level)`, `readiness_target(path)`, `done_criteria(path)`, `format_profile(path)`.
+- Add: `store.profile_path(workspace)` — path to `.romyq/project_profile.json`.
+- Add: `romyq profile` — show current complexity profile.
+- Add: `romyq profile <level>` — set complexity level.
+
+**Software Lifecycle Model (`romyq/lifecycle.py` + `.romyq/lifecycle.json`):**
+- Add: Full lifecycle model: Project → Phases → Tasks with `id`, `name`, `tasks: [{id, text, status, completed_at}]`.
+- Add: Phase progress tracking: `total_tasks`, `completed_tasks`, `current_task`, `percentage_complete` per phase.
+- Add: `generate(api_key, mission, complexity, done_criteria)` — calls DeepSeek to generate a structured lifecycle. Falls back to sane defaults on API failure.
+- Add: `mark_task_complete(path, phase_id, task_id)` — marks task complete, auto-advances to next task; marks phase complete and advances current phase when all tasks done.
+- Add: `mark_task_active(path, phase_id, task_id)`, `skip_task(path, phase_id, task_id)`, `reset_active_tasks(path)`.
+- Add: `current_phase(data)`, `next_pending_task(data)`, `all_phases_complete(data)`.
+- Add: `progress_summary(data)` — overall progress counts.
+- Add: `format_roadmap(data)` — ✓/→/□ roadmap with percentages.
+- Add: `format_current_phase(data)` — current phase tasks with status icons.
+- Add: `store.lifecycle_path(workspace)` — path to `.romyq/lifecycle.json`.
+
+**Phase-Based Execution (loop.py):**
+- Add: On startup, generate `.romyq/lifecycle.json` if absent. Uses DeepSeek to create a structured phase plan aligned with the project's complexity profile.
+- Add: Before calling DeepSeek for task generation, pull the next pending task directly from the lifecycle. If lifecycle has a pending task, use it; otherwise fall back to DeepSeek task generation.
+- Add: After each successful task, mark the corresponding lifecycle task complete and advance phase state.
+- Add: After each success, evaluate the lifecycle recommendation. If `Stop` is returned and done criteria are satisfied, stop the loop with `reason="lifecycle_complete"`.
+
+**Recommendation Engine (`romyq/recommendation.py`):**
+- Add: `recommend(readiness, lifecycle, state, profile)` — evaluates all factors and returns Continue/Pause/Review/Stop with reason.
+- Add: Priority order: Pause > 5+ consecutive failures (Review) > all phases done + criteria met + readiness at target (Stop) > all phases done but criteria pending (Review) > readiness above threshold (Continue) > default (Continue).
+- Add: `_check_done_criteria(criteria, lifecycle, state)` — checks lifecycle phase names, completed task text, and capability state against done criteria strings.
+- Add: `recommend_from_paths(...)` — convenience wrapper that loads all data from workspace paths.
+- Add: `format_recommendation(result)` — human-readable display with icons (▶⏸⚠■).
+- Add: `romyq recommendation` — show current recommendation.
+
+**New CLI Commands:**
+- Add: `romyq roadmap` — show lifecycle roadmap with complexity profile and readiness score.
+- Add: `romyq lifecycle` — full lifecycle view (roadmap + current phase + done criteria + summary).
+- Add: `romyq lifecycle reset` — delete lifecycle.json so it regenerates on next run.
+- Add: `romyq phase` — show current phase and its tasks with progress.
+- Add: `romyq profile [level]` — show or set complexity profile.
+- Add: `romyq recommendation` — show Continue/Pause/Review/Stop recommendation.
+- All new commands support `--json` output.
+
+**New tests:**
+- Add: `tests/test_profile.py` — 36 tests covering CRUD, defaults, config values, all three levels.
+- Add: `tests/test_lifecycle.py` — 65 tests covering load/save, parse, validate, build, phase navigation, task mutations, progress tracking, format functions.
+- Add: `tests/test_recommendation.py` — 33 tests covering all recommendation paths, threshold sensitivity, done criteria checking, format output.
+- Add: `tests/test_phase_tracking.py` — 33 tests covering phase state machine transitions, multi-phase completion, skip interactions, progress math.
+- Total: **1267 tests** (up from 1082), 2 skipped (Textual TUI).
+
 ## 0.9.1
 
 **Emergency hotfix — production NameError on `romyq init`.**

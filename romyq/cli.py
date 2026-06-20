@@ -1784,6 +1784,220 @@ def cmd_timeline(args: argparse.Namespace) -> None:
         print(f"[{ts}] {label}{detail}")
 
 
+# ── roadmap ───────────────────────────────────────────────────────────────────
+
+def cmd_roadmap(args: argparse.Namespace) -> None:
+    """Show the lifecycle roadmap with phase progress."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .lifecycle import load as lc_load, format_roadmap, progress_summary
+    lc_path = store.lifecycle_path(workspace_path)
+    data = lc_load(lc_path)
+
+    if getattr(args, "json", False):
+        print(_json.dumps(data, indent=2))
+        return
+
+    if not data.get("phases"):
+        print("No lifecycle found.")
+        print("A lifecycle is generated automatically when 'romyq run' starts.")
+        return
+
+    print(f"romyq roadmap: {root}\n")
+
+    from .profile import load as prof_load, format_profile
+    prof_path = store.profile_path(workspace_path)
+    print(format_profile(prof_path))
+    print()
+
+    try:
+        from .readiness import compute_from_path, format_readiness
+        ps_path = store.project_state_path(workspace_path)
+        rdns = compute_from_path(ps_path)
+        print(f"Readiness     : {rdns['overall']:.0f}%  ({rdns.get('label', '')})")
+    except Exception:
+        pass
+
+    print()
+    print(format_roadmap(data))
+    print()
+
+    crit = data.get("done_criteria", [])
+    if crit:
+        print(f"Done criteria : {', '.join(crit)}")
+
+
+# ── lifecycle ─────────────────────────────────────────────────────────────────
+
+def cmd_lifecycle(args: argparse.Namespace) -> None:
+    """Show or manage the software lifecycle."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .lifecycle import (
+        load as lc_load, format_roadmap, format_current_phase,
+        progress_summary, all_phases_complete,
+    )
+    lc_path = store.lifecycle_path(workspace_path)
+    data = lc_load(lc_path)
+
+    action = getattr(args, "action", "show") or "show"
+
+    if action == "reset":
+        Path(lc_path).unlink(missing_ok=True)
+        print("Lifecycle reset. It will be regenerated on the next 'romyq run'.")
+        return
+
+    if getattr(args, "json", False):
+        print(_json.dumps(data, indent=2))
+        return
+
+    if not data.get("phases"):
+        print("No lifecycle found.")
+        print("Run 'romyq run' to generate one, or set complexity with 'romyq profile'.")
+        return
+
+    SEP = "─" * 56
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+        print(SEP)
+
+    print(f"romyq lifecycle: {root}")
+
+    section("Lifecycle Overview")
+    print(format_roadmap(data))
+
+    section("Current Phase")
+    print(format_current_phase(data))
+
+    section("Done Criteria")
+    crit = data.get("done_criteria", [])
+    if crit:
+        for c in crit:
+            print(f"  □ {c}")
+    else:
+        print("  (none defined)")
+
+    section("Summary")
+    summ = progress_summary(data)
+    W = 22
+
+    def row(label: str, value: str) -> None:
+        print(f"  {label:<{W}}{value}")
+
+    row("Overall progress:", f"{summ['overall_percentage']}%")
+    row("Phases complete:", f"{summ['complete_phases']}/{summ['total_phases']}")
+    row("Tasks complete:", f"{summ['completed_tasks']}/{summ['total_tasks']}")
+    row("Tasks remaining:", str(summ["remaining_tasks"]))
+    if all_phases_complete(data):
+        print("\n  All phases complete!")
+
+    print()
+
+
+# ── phase ─────────────────────────────────────────────────────────────────────
+
+def cmd_phase(args: argparse.Namespace) -> None:
+    """Show the current lifecycle phase and its tasks."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .lifecycle import load as lc_load, format_current_phase, current_phase
+    lc_path = store.lifecycle_path(workspace_path)
+    data = lc_load(lc_path)
+
+    if not data.get("phases"):
+        print("No lifecycle found. Run 'romyq run' to generate one.")
+        return
+
+    print(f"romyq phase: {root}\n")
+    print(format_current_phase(data))
+
+    phase = current_phase(data)
+    if phase:
+        pct = phase.get("percentage_complete", 0)
+        total = phase.get("total_tasks", 0)
+        done = phase.get("completed_tasks", 0)
+        print(f"\n  Progress: {done}/{total} tasks  ({pct}%)")
+
+
+# ── profile ───────────────────────────────────────────────────────────────────
+
+def cmd_profile(args: argparse.Namespace) -> None:
+    """Show or set the project complexity profile."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.ensure_dir(workspace_path)
+
+    from .profile import set_complexity, format_profile, VALID_LEVELS
+    prof_path = store.profile_path(workspace_path)
+
+    level = getattr(args, "level", None)
+    if level:
+        if level not in VALID_LEVELS:
+            print(f"Error: complexity must be one of {sorted(VALID_LEVELS)}")
+            sys.exit(1)
+        set_complexity(prof_path, level)
+        print(f"Complexity set to: {level}")
+        print("Tip: delete .romyq/lifecycle.json to regenerate with the new profile.")
+        return
+
+    print(f"romyq profile: {root}\n")
+    print(format_profile(prof_path))
+
+
+# ── recommendation ────────────────────────────────────────────────────────────
+
+def cmd_recommendation(args: argparse.Namespace) -> None:
+    """Show the current project recommendation (Continue/Pause/Review/Stop)."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .recommendation import recommend_from_paths, format_recommendation
+    result = recommend_from_paths(workspace_path=workspace_path)
+
+    if getattr(args, "json", False):
+        print(_json.dumps(result, indent=2))
+        return
+
+    print(f"romyq recommendation: {root}\n")
+    print(format_recommendation(result))
+
+
 # ── version ───────────────────────────────────────────────────────────────────
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -2214,6 +2428,33 @@ def main() -> None:
     p_ptimeline.add_argument("--last", type=int, default=20, metavar="N")
     p_ptimeline.add_argument("--json", action="store_true", default=False)
     p_ptimeline.set_defaults(func=cmd_project_timeline)
+
+    p_roadmap = sub.add_parser("roadmap", help="Show the lifecycle roadmap with phase progress")
+    p_roadmap.add_argument("workspace", nargs="?", default=None)
+    p_roadmap.add_argument("--json", action="store_true", default=False)
+    p_roadmap.set_defaults(func=cmd_roadmap)
+
+    p_lifecycle = sub.add_parser("lifecycle", help="Show or manage the software lifecycle")
+    p_lifecycle.add_argument("action", nargs="?", choices=["show", "reset"], default="show")
+    p_lifecycle.add_argument("workspace", nargs="?", default=None)
+    p_lifecycle.add_argument("--json", action="store_true", default=False)
+    p_lifecycle.set_defaults(func=cmd_lifecycle)
+
+    p_phase = sub.add_parser("phase", help="Show the current lifecycle phase and tasks")
+    p_phase.add_argument("workspace", nargs="?", default=None)
+    p_phase.set_defaults(func=cmd_phase)
+
+    p_profile = sub.add_parser("profile", help="Show or set the project complexity profile")
+    p_profile.add_argument("level", nargs="?", default=None,
+                           help="Complexity level: basic | intermediate | advanced")
+    p_profile.add_argument("workspace", nargs="?", default=None)
+    p_profile.set_defaults(func=cmd_profile)
+
+    p_recommendation = sub.add_parser("recommendation",
+                                       help="Show the current project recommendation")
+    p_recommendation.add_argument("workspace", nargs="?", default=None)
+    p_recommendation.add_argument("--json", action="store_true", default=False)
+    p_recommendation.set_defaults(func=cmd_recommendation)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

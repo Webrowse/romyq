@@ -27,6 +27,8 @@ _RULES_FILE          = "rules.json"
 _DECISIONS_FILE      = "decisions.json"
 _PROJECT_STATE_FILE  = "project_state.json"
 _CONSTITUTION_FILE   = "project.md"
+_LIFECYCLE_FILE      = "lifecycle.json"
+_PROFILE_FILE        = "project_profile.json"
 
 # Legacy CWD-relative names → new names inside .romyq/
 _LEGACY = {
@@ -101,6 +103,14 @@ def project_state_path(workspace: str) -> str:
 
 def constitution_path(workspace: str) -> str:
     return str(ensure_dir(workspace) / _CONSTITUTION_FILE)
+
+
+def lifecycle_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _LIFECYCLE_FILE)
+
+
+def profile_path(workspace: str) -> str:
+    return str(ensure_dir(workspace) / _PROFILE_FILE)
 
 
 def migrate(workspace: str) -> list[str]:

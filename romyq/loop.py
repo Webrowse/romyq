@@ -172,6 +172,8 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
     rules_path = store.rules_path(workspace_path)
     decisions_path = store.decisions_path(workspace_path)
     ps_path = store.project_state_path(workspace_path)
+    lc_path = store.lifecycle_path(workspace_path)
+    prof_path = store.profile_path(workspace_path)
 
     timeout_s = int(os.getenv("ROMYQ_CLAUDE_TIMEOUT", str(60 * 30)))
     activity.log(f"Romyq started. Claude timeout: {timeout_s // 60}m.")
@@ -246,6 +248,25 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
             _dec_mod.write_plan(plan_path, plan_data)
             task_count = len(plan_data.get("tasks", []))
             activity.log(f"Mission plan generated: {task_count} tasks in .romyq/plan.json")
+    except Exception:
+        pass
+
+    # Generate lifecycle if not already present.
+    try:
+        import pathlib as _pl2
+        from . import lifecycle as _lc_mod
+        from . import profile as _prof_mod
+        if not _pl2.Path(lc_path).exists():
+            _complexity = _prof_mod.get_complexity(prof_path)
+            _lc_mission = load()
+            _lc_data = _lc_mod.generate(api_key, _lc_mission, _complexity)
+            _lc_mod.save(lc_path, _lc_data)
+            _phase_count = len(_lc_data.get("phases", []))
+            activity.log(
+                f"Lifecycle generated: {_phase_count} phases in .romyq/lifecycle.json"
+            )
+        else:
+            _lc_mod.reset_active_tasks(lc_path)
     except Exception:
         pass
 
@@ -394,23 +415,47 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
             print(f"\n{task}\n")
 
         else:
-            # Check persistent block: has this task failed too many times?
-            activity.log(f"Task {task_num}  mode={mode}")
-            activity.log("Asking DeepSeek...")
-            task = manager.generate_task(
-                api_key=api_key,
-                mission=mission,
-                state=state_text,
-                tasks_completed=state["tasks_completed"],
-                git_log=repo_before["git_log"],
-                git_status=repo_before["git_status"],
-                mode=mode,
-                workspace=workspace_path,
-                notes=notes.load(store.notes_path(workspace_path)),
-                state_dict=state,
-            )
-            activity.log("Task generated.")
-            key = _task_key(task)
+            # Try to get the next task from the lifecycle before calling DeepSeek.
+            _lc_phase_id: int | None = None
+            _lc_task_id: str | None = None
+            _lc_task_used = False
+            try:
+                import pathlib as _lc_pl
+                from . import lifecycle as _lc_mod2
+                if _lc_pl.Path(lc_path).exists():
+                    _lc_data = _lc_mod2.load(lc_path)
+                    _lc_phase, _lc_task_obj = _lc_mod2.next_pending_task(_lc_data)
+                    if _lc_phase and _lc_task_obj:
+                        task = _lc_task_obj["text"]
+                        key = _task_key(task)
+                        _lc_phase_id = _lc_phase["id"]
+                        _lc_task_id = _lc_task_obj["id"]
+                        _lc_task_used = True
+                        activity.log(
+                            f"Task {task_num}  mode={mode}  "
+                            f"phase='{_lc_phase['name']}'  [{_lc_task_id}]"
+                        )
+                        print(f"\n{task}\n")
+            except Exception:
+                _lc_task_used = False
+
+            if not _lc_task_used:
+                activity.log(f"Task {task_num}  mode={mode}")
+                activity.log("Asking DeepSeek...")
+                task = manager.generate_task(
+                    api_key=api_key,
+                    mission=mission,
+                    state=state_text,
+                    tasks_completed=state["tasks_completed"],
+                    git_log=repo_before["git_log"],
+                    git_status=repo_before["git_status"],
+                    mode=mode,
+                    workspace=workspace_path,
+                    notes=notes.load(store.notes_path(workspace_path)),
+                    state_dict=state,
+                )
+                activity.log("Task generated.")
+                key = _task_key(task)
 
             # Memory check: warn if this task fingerprint has prior failures.
             prior_text = mem_mod.prior_outcomes_text(mem_path, task)
@@ -481,14 +526,15 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
             except Exception:
                 pass
 
-            if key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
+            if not _lc_task_used and key == last_failed_key and same_task_streak >= _SAME_TASK_THRESHOLD:
                 activity.log(f"Task has failed {same_task_streak} times — switching to diagnosis mode.")
                 task = _make_diagnosis_task(task, same_task_streak)
                 key = "__diagnosis__"
                 mode = "audit"
                 in_diagnosis = True
 
-            print(f"\n{task}\n")
+            if not _lc_task_used:
+                print(f"\n{task}\n")
 
         set_current_task(state, task)
 
@@ -747,6 +793,35 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                     emit(e_path, ev.CAPABILITY_UPDATED, name=_current_cap)
             except Exception:
                 pass
+
+            # Mark lifecycle task complete and check for Stop recommendation
+            _lifecycle_stop = False
+            _lifecycle_stop_reason = ""
+            try:
+                from . import lifecycle as _lc_success
+                from . import recommendation as _rec_mod
+                from . import readiness as _rdns_mod
+                from . import profile as _prof_success
+                if _lc_task_used and _lc_phase_id is not None and _lc_task_id is not None:
+                    _lc_success.mark_task_complete(lc_path, _lc_phase_id, _lc_task_id)
+                _lc_done = _lc_success.load(lc_path)
+                _rdns = _rdns_mod.compute_from_path(ps_path)
+                _complexity = _prof_success.get_complexity(prof_path)
+                _prof_cfg = _prof_success.config(_complexity)
+                _rec = _rec_mod.recommend(_rdns, _lc_done, state, _prof_cfg)
+                if _rec["recommendation"] == "Stop":
+                    _lifecycle_stop = True
+                    _lifecycle_stop_reason = _rec["reason"]
+            except Exception:
+                pass
+
+            if _lifecycle_stop:
+                activity.log(f"Lifecycle recommendation: Stop — {_lifecycle_stop_reason}")
+                emit(e_path, ev.LOOP_STOPPED, reason="lifecycle_complete")
+                mark_completed(state)
+                set_phase(state, RunState.STOPPED)
+                save_state(state, s_path)
+                break
 
             if mode == "audit":
                 mark_audit_complete(state)
