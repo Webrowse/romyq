@@ -111,6 +111,7 @@ def decompose(
     Returns a plan dict ready to write.  Never raises — returns an empty plan
     on API failure.
     """
+    _source = "deepseek"
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
@@ -128,12 +129,14 @@ def decompose(
         tasks = _parse_tasks(raw)
     except Exception:
         tasks = []
+        _source = "local_fallback"
 
     return {
         "version": _VERSION,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "mission": mission[:500],
         "tasks": tasks,
+        "source": _source,
     }
 
 

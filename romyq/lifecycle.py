@@ -231,6 +231,7 @@ def _build_lifecycle(
     mission: str,
     complexity: str,
     done_criteria: list[str],
+    source: str = "deepseek",
 ) -> dict:
     """Assemble a full lifecycle dict from validated phases."""
     enriched = list(phases)
@@ -252,10 +253,15 @@ def _build_lifecycle(
         "current_phase_id": current_phase_id,
         "done_criteria": done_criteria,
         "phases": enriched,
+        "source": source,
     }
 
 
 # ── generation (requires DeepSeek) ───────────────────────────────────────────
+
+class LifecycleGenerationError(Exception):
+    """Raised when DeepSeek lifecycle generation fails and no fallback should be used."""
+
 
 def generate(
     api_key: str,
@@ -265,8 +271,9 @@ def generate(
 ) -> dict:
     """Call DeepSeek to generate a lifecycle for the mission.
 
-    Returns a lifecycle dict ready to save. Never raises — returns an empty
-    lifecycle on API failure.
+    Returns a lifecycle dict with a 'source' field: 'deepseek' or 'local_fallback'.
+    Never raises — falls back to _default_phases() on API failure.
+    Callers should check data['source'] to determine whether DeepSeek was used.
     """
     from romyq.profile import COMPLEXITY_CONFIG
     if done_criteria is None:
@@ -281,6 +288,7 @@ def generate(
         complexity_guidance=guidance,
     )
 
+    _source = "deepseek"
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
@@ -300,8 +308,9 @@ def generate(
         phases = _validate_phases(raw_phases)
     except Exception:
         phases = _default_phases(complexity)
+        _source = "local_fallback"
 
-    return _build_lifecycle(phases, mission, complexity, done_criteria)
+    return _build_lifecycle(phases, mission, complexity, done_criteria, source=_source)
 
 
 def _default_phases(complexity: str) -> list[dict]:

@@ -124,8 +124,14 @@ def render(workspace_path: str, *, out: TextIO | None = None) -> None:
     pr()
 
     # ── lifecycle roadmap ─────────────────────────────────────────────────────
+    lc_source = lc_data.get("source", "")
+    _source_tag = ""
+    if lc_source == "local_fallback":
+        _source_tag = "  ⚠ local fallback — DeepSeek unavailable"
+    elif lc_source == "deepseek":
+        _source_tag = "  ✓ DeepSeek"
     pr(_THICK)
-    pr("  Lifecycle")
+    pr(f"  Lifecycle{_source_tag}")
     pr(_THICK)
     pr()
 
