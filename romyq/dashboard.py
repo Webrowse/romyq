@@ -85,8 +85,8 @@ def render(workspace_path: str, *, out: TextIO | None = None) -> None:
     if out is None:
         out = sys.stdout
 
-    def pr(line: str = "") -> None:
-        print(line, file=out)
+    def pr(*args, **kwargs) -> None:
+        print(*args, file=out, **kwargs)
 
     d = _load_all(workspace_path)
     lc_data = d["lc_data"]

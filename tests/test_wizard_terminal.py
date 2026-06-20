@@ -433,3 +433,258 @@ class TestRunTerminalWizard:
             )
         call_kwargs = mock_setup.call_args
         assert call_kwargs is not None
+
+
+# ── REGRESSION: lifecycle preview path (pr(**kwargs) bug) ────────────────────
+#
+# These tests exercise _generate_preview=True with all three complexity levels.
+# They FAIL on the original 0.10.1 code (TypeError: pr() got unexpected keyword
+# argument 'end') and PASS after the fix.
+
+class TestLifecyclePreviewPath:
+    """Regression coverage for the pr(**kwargs) crash in the preview path."""
+
+    def _make_ws(self, tmp_path: Path) -> str:
+        ws = str(tmp_path)
+        store.ensure_dir(ws)
+        (tmp_path / "mission.md").write_text("Build a test app")
+        return ws
+
+    def _wizard_keys(self, choices):
+        it = iter(choices)
+        def _fn():
+            try:
+                return next(it)
+            except StopIteration:
+                return "enter"
+        return _fn
+
+    def _force_tty(self, monkeypatch):
+        import sys as _sys
+        monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr(_sys.stdout, "isatty", lambda: True)
+
+    def _mock_lifecycle(self, n_phases=2):
+        return {
+            "phases": [
+                {
+                    "id": i,
+                    "name": f"Phase {i}",
+                    "status": "pending",
+                    "total_tasks": 2,
+                    "completed_tasks": 0,
+                    "tasks": [
+                        {"id": f"t{i}a", "text": "Setup environment", "status": "pending"},
+                        {"id": f"t{i}b", "text": "Write unit tests", "status": "pending"},
+                    ],
+                }
+                for i in range(1, n_phases + 1)
+            ],
+            "done_criteria": ["Tests pass", "CI green"],
+            "mission": "Build a test app",
+            "complexity": "intermediate",
+        }
+
+    def _run_wizard_with_preview(
+        self,
+        ws: str,
+        monkeypatch,
+        *,
+        key_sequence,
+        reader,
+        mock_lc=None,
+    ):
+        """Run wizard with _generate_preview=True, api_key set, lifecycle mocked."""
+        self._force_tty(monkeypatch)
+        mock_lc = mock_lc if mock_lc is not None else self._mock_lifecycle()
+
+        with patch("romyq.wizard_terminal.generate_architecture_preview", return_value=mock_lc), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={"env": "ok"}), \
+             patch("romyq.loop.run"):
+            return run_terminal_wizard(
+                ws,
+                api_key="sk-test-key-preview",
+                _keypress_fn=self._wizard_keys(key_sequence),
+                _read_line_fn=reader,
+                _out=io.StringIO(),
+                _generate_preview=True,
+            )
+
+    # ── Basic complexity ──────────────────────────────────────────────────────
+
+    def test_preview_basic_no_crash(self, tmp_path, monkeypatch):
+        """Regression: pr(…, end='', flush=True) must not raise TypeError."""
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build a basic app", "", "Y"])
+        reader = lambda p: next(lines)
+        # key 1 = index 0 = basic
+        result = self._run_wizard_with_preview(ws, monkeypatch, key_sequence=["1"], reader=reader)
+        assert isinstance(result, dict)
+
+    def test_preview_basic_lifecycle_json_created(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build a basic app", "", "Y"])
+        reader = lambda p: next(lines)
+        self._run_wizard_with_preview(ws, monkeypatch, key_sequence=["1"], reader=reader)
+        from romyq import store
+        assert Path(store.lifecycle_path(ws)).exists()
+
+    def test_preview_basic_output_contains_phase_names(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        out = io.StringIO()
+        lines = iter(["Build a basic app", "", "Y"])
+        reader = lambda p: next(lines)
+        self._force_tty(monkeypatch)
+        with patch("romyq.wizard_terminal.generate_architecture_preview", return_value=self._mock_lifecycle()), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={}), \
+             patch("romyq.loop.run"):
+            run_terminal_wizard(
+                ws,
+                api_key="sk-test-key",
+                _keypress_fn=self._wizard_keys(["1"]),
+                _read_line_fn=reader,
+                _out=out,
+                _generate_preview=True,
+            )
+        result = out.getvalue()
+        assert "Phase 1" in result or "Phase" in result
+
+    # ── Intermediate complexity ───────────────────────────────────────────────
+
+    def test_preview_intermediate_no_crash(self, tmp_path, monkeypatch):
+        """Regression: this is the exact path the real user hit."""
+        ws = self._make_ws(tmp_path)
+        # key sequence: "down" then "enter" → index 1 = intermediate
+        lines = iter(["Build an intermediate app", "", "Y"])
+        reader = lambda p: next(lines)
+        result = self._run_wizard_with_preview(
+            ws, monkeypatch, key_sequence=["down", "enter"], reader=reader
+        )
+        assert isinstance(result, dict)
+
+    def test_preview_intermediate_profile_written(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build an intermediate app", "", "Y"])
+        reader = lambda p: next(lines)
+        self._run_wizard_with_preview(ws, monkeypatch, key_sequence=["down", "enter"], reader=reader)
+        from romyq.profile import get_complexity
+        from romyq import store
+        assert get_complexity(store.profile_path(ws)) == "intermediate"
+
+    def test_preview_intermediate_pr_end_kwarg_accepted(self, tmp_path, monkeypatch):
+        """Directly verify pr() accepts end and flush kwargs without raising."""
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build this app", "", "Y"])
+        reader = lambda p: next(lines)
+        # If the bug is present, this raises TypeError inside the wizard.
+        # No exception = fix is working.
+        try:
+            self._run_wizard_with_preview(
+                ws, monkeypatch, key_sequence=["down", "enter"], reader=reader
+            )
+        except TypeError as e:
+            pytest.fail(f"pr() raised TypeError — fix not applied: {e}")
+
+    # ── Advanced complexity ───────────────────────────────────────────────────
+
+    def test_preview_advanced_no_crash(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        # key sequence: down+down+enter → index 2 = advanced
+        lines = iter(["Build an advanced system", "", "Y"])
+        reader = lambda p: next(lines)
+        result = self._run_wizard_with_preview(
+            ws, monkeypatch, key_sequence=["down", "down", "enter"], reader=reader
+        )
+        assert isinstance(result, dict)
+
+    def test_preview_advanced_profile_written(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build an advanced system", "", "Y"])
+        reader = lambda p: next(lines)
+        self._run_wizard_with_preview(
+            ws, monkeypatch, key_sequence=["down", "down", "enter"], reader=reader
+        )
+        from romyq.profile import get_complexity
+        from romyq import store
+        assert get_complexity(store.profile_path(ws)) == "advanced"
+
+    # ── Preview unavailable path ──────────────────────────────────────────────
+
+    def test_preview_unavailable_no_crash(self, tmp_path, monkeypatch):
+        """When generate_architecture_preview returns None, wizard continues."""
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build a thing", "", "Y"])
+        reader = lambda p: next(lines)
+        self._force_tty(monkeypatch)
+        with patch("romyq.wizard_terminal.generate_architecture_preview", return_value=None), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={}), \
+             patch("romyq.loop.run"):
+            result = run_terminal_wizard(
+                ws,
+                api_key="sk-test-key",
+                _keypress_fn=self._wizard_keys(["enter"]),
+                _read_line_fn=reader,
+                _out=io.StringIO(),
+                _generate_preview=True,
+            )
+        assert isinstance(result, dict)
+
+    def test_preview_unavailable_output_says_unavailable(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        out = io.StringIO()
+        lines = iter(["Build a thing", "", "n"])
+        reader = lambda p: next(lines)
+        self._force_tty(monkeypatch)
+        with patch("romyq.wizard_terminal.generate_architecture_preview", return_value=None), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={}):
+            run_terminal_wizard(
+                ws,
+                api_key="sk-test-key",
+                _keypress_fn=self._wizard_keys(["enter"]),
+                _read_line_fn=reader,
+                _out=out,
+                _generate_preview=True,
+            )
+        assert "unavailable" in out.getvalue() or "preview" in out.getvalue().lower()
+
+    def test_preview_generates_done_message(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        out = io.StringIO()
+        lines = iter(["Build something", "", "n"])
+        reader = lambda p: next(lines)
+        self._force_tty(monkeypatch)
+        with patch("romyq.wizard_terminal.generate_architecture_preview", return_value=self._mock_lifecycle()), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={}):
+            run_terminal_wizard(
+                ws,
+                api_key="sk-test-key",
+                _keypress_fn=self._wizard_keys(["enter"]),
+                _read_line_fn=reader,
+                _out=out,
+                _generate_preview=True,
+            )
+        result = out.getvalue()
+        assert "done" in result.lower() or "Lifecycle" in result
+
+    def test_preview_calls_generate_with_correct_complexity(self, tmp_path, monkeypatch):
+        ws = self._make_ws(tmp_path)
+        lines = iter(["Build something", "", "n"])
+        reader = lambda p: next(lines)
+        self._force_tty(monkeypatch)
+        captured_args = []
+        def mock_gen(api_key, mission, complexity):
+            captured_args.append((api_key, mission, complexity))
+            return self._mock_lifecycle()
+
+        with patch("romyq.wizard_terminal.generate_architecture_preview", side_effect=mock_gen), \
+             patch("romyq.wizard_logic.wizard_setup", return_value={}):
+            run_terminal_wizard(
+                ws,
+                api_key="sk-test-key",
+                _keypress_fn=self._wizard_keys(["down", "enter"]),  # intermediate
+                _read_line_fn=reader,
+                _out=io.StringIO(),
+                _generate_preview=True,
+            )
+        assert len(captured_args) == 1
+        assert captured_args[0][2] == "intermediate"

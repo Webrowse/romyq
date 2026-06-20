@@ -255,8 +255,8 @@ def run_terminal_wizard(
     if _read_line_fn is None:
         _read_line_fn = lambda prompt: input(prompt).strip()
 
-    def pr(line: str = "") -> None:
-        print(line, file=_out)
+    def pr(*args, **kwargs) -> None:
+        print(*args, file=_out, **kwargs)
 
     THICK = "━" * 60
     SEP = "─" * 60
