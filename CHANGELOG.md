@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.1
+
+**Emergency hotfix — production NameError on `romyq init`.**
+
+**Bug fix:**
+- Fix: `import sys` missing from `romyq/loop.py` module-level imports. Line 278 (`_live_status = sys.stdout.isatty()`) crashed with `NameError: name 'sys' is not defined` on every call to `loop.run()`. This affected `romyq run` and the wizard "Start Now" path in `romyq init`.
+- Fix: Remove redundant `import sys as _sys` inside `_heartbeat_cb()` and inside the status-line clear block. Now use the module-level `sys` directly.
+
+**New tests:**
+- Add: `tests/test_cli_e2e.py` — 47 end-to-end integration tests that execute the real CLI as a subprocess. Tests cover: `romyq version`, `romyq init --no-wizard`, `romyq doctor`, `romyq health`, `romyq status`, `romyq pause`, `romyq resume`, `romyq stop`, `romyq run` (missing API key path), and init side-effect isolation.
+- Add: `TestLoopRunImport.test_sys_is_imported_in_loop` — regression test that scans the `loop.py` source and asserts `import sys` is present at module level. This test would have caught the 0.9.0 regression.
+- Add: `TestLoopRunImport.test_loop_run_reaches_sys_isatty_without_nameerror` — calls `loop.run()` with mocked network dependencies and asserts no `NameError` is raised.
+- Total: **1082 tests** (up from 1035), 2 skipped (Textual TUI tests require no Textual installed).
+
 ## 0.9.0
 
 **Software project governance and visibility — Romyq now speaks in outcomes, not tasks.**

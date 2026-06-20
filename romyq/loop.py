@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -278,13 +279,12 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
     _live_status = sys.stdout.isatty()
 
     def _heartbeat_cb(elapsed: int) -> None:
-        import sys as _sys
         remaining = max(0, timeout_s - elapsed)
         e_fmt = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
         r_fmt = f"{remaining // 60}m{remaining % 60:02d}s" if remaining >= 60 else f"{remaining}s"
         if _live_status:
-            _sys.stdout.write(f"\rClaude | Executing | {e_fmt} elapsed | {r_fmt} remaining   ")
-            _sys.stdout.flush()
+            sys.stdout.write(f"\rClaude | Executing | {e_fmt} elapsed | {r_fmt} remaining   ")
+            sys.stdout.flush()
         else:
             activity.log(f"Claude running ({e_fmt} elapsed, {r_fmt} remaining)")
 
@@ -647,9 +647,8 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
 
         elapsed = int(time.monotonic() - t_start)
         if _live_status:
-            import sys as _sys
-            _sys.stdout.write("\r" + " " * 70 + "\r")
-            _sys.stdout.flush()
+            sys.stdout.write("\r" + " " * 70 + "\r")
+            sys.stdout.flush()
         if timed_out:
             activity.log(f"Claude timed out ({elapsed}s).")
         else:
