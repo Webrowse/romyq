@@ -87,6 +87,17 @@ That's it. Romyq takes over from here.
 | `romyq stats [--json]` | Long-run operational statistics: tasks, validator rates, runtime |
 | `romyq timeline [--last N] [--json]` | Human-readable event timeline |
 
+**Governance & Visibility (0.9.0)**
+
+| Command | Description |
+|---|---|
+| `romyq readiness` | Mission readiness score: Core Functionality, Testing, Security, Operations |
+| `romyq capabilities` | Show the project capability model (what's missing/partial/complete) |
+| `romyq capabilities set <name> <status>` | Manually set a capability: `missing \| partial \| complete` |
+| `romyq capabilities infer` | Infer capabilities from task history |
+| `romyq project-timeline [--last N]` | Project evolution timeline ("Added Authentication", not "Task #17") |
+| `romyq constitution` | Generate `.romyq/project.md` — single document view of the whole project |
+
 **Intelligence & Diagnostics**
 
 | Command | Description |

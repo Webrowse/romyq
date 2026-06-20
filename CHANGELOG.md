@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.9.0
+
+**Software project governance and visibility — Romyq now speaks in outcomes, not tasks.**
+
+**Project Capability Model (`romyq/capabilities.py` + `.romyq/project_state.json`):**
+- Add: Capability tracking with statuses `missing | partial | complete`. Standard capabilities: Core Features, Authentication, Authorization, Validation, Database, Search, Testing, Documentation, Security, Observability, Deployment, Performance.
+- Add: `set_capability(path, name, status, evidence)` — upserts a capability; atomic write; evidence history capped at 5 entries.
+- Add: `get_capability(path, name)`, `list_capabilities(path)`, `capability_summary(path)`.
+- Add: `infer_capability_from_task(task)` — keyword-based best-match against 12 capability keyword sets.
+- Add: `infer_from_history(project_state_path, history_path)` — scans task history to auto-set partial/complete for known capabilities. Complete requires ≥2 successes with ≥60% success rate.
+- Add: `format_capabilities(path)` — human-readable capability table with status icons (✓ ~ ✗).
+- Add: `store.project_state_path(workspace)` — path to `.romyq/project_state.json`.
+- Add: `romyq capabilities` — list capability model with counts.
+- Add: `romyq capabilities set <name> <status>` — manually set a capability status.
+- Add: `romyq capabilities infer` — infer capabilities from task history.
+
+**Mission Readiness Score (`romyq/readiness.py`):**
+- Add: `compute(capabilities)` — 0–100 weighted score across 4 categories. Weights: Core Functionality 40%, Testing 25%, Security 20%, Operations 15%. Status scores: complete=100, partial=50, missing=0.
+- Add: `compute_from_path(project_state_path)` — loads capabilities then computes score.
+- Add: Labels: "Not Ready" (<50), "Approaching" (50–79), "Ready" (80–89), "Excellent" (≥90).
+- Add: `format_readiness(readiness)` — visual report with progress bars per category.
+- Add: `romyq readiness` — show mission readiness and stop recommendation.
+
+**Project Timeline (`romyq/timeline.py`):**
+- Add: `build_timeline(history_path, limit)` — project evolution timeline from successful task history. Describes capabilities added ("Added Authentication") not tasks completed. Deduplicates by capability (shows each cap once, most recent).
+- Add: `format_timeline(history_path, limit)` — human-readable timeline string.
+- Add: `romyq project-timeline` — show capability-level project evolution.
+
+**Project Constitution (`romyq/constitution.py` + `.romyq/project.md`):**
+- Add: `generate(workspace, ...)` — generates a markdown document combining: mission, rules, knowledge lessons, capabilities, readiness, current priorities and stop recommendation.
+- Add: `write(workspace, ...)` — atomic write to `.romyq/project.md`; returns path.
+- Add: `store.constitution_path(workspace)` — path to `.romyq/project.md`.
+- Add: `romyq constitution` — generate and write project.md.
+- Add: `romyq constitution --print` — print to stdout without writing to disk.
+
+**Stop Conditions (`romyq/stop_conditions.py`):**
+- Add: `evaluate(readiness, state, threshold)` — evaluates 3 stop conditions: readiness above threshold (default 80%), mission complete, core capabilities 100%. Returns recommendation: "Stop" or "Continue".
+- Add: `format_stop_conditions(result)` — human-readable stop recommendation with condition checklist.
+- Add: `DEFAULT_THRESHOLD = 80` — default readiness threshold for "Good Enough" recommendation.
+
+**Current Activity Panel / Explain Why:**
+- Update: Loop computes `current_capability` and `task_explanation` (capability, reason, related rules, related lessons) before each task execution. Stored in state.json so dashboard and status commands can display it.
+
+**Live Status Line (Feature 7):**
+- Update: `_heartbeat_cb` in loop.py uses `\r` in-place line overwriting when `sys.stdout.isatty()`. Shows: "Claude | Executing | 4m21s elapsed | 25m39s remaining". Falls back to `activity.log()` when not a TTY (CI, pipes).
+- Update: After Claude finishes, overwrites status line with spaces before printing "Claude done".
+
+**Pause/Resume Confirmation (Feature 6):**
+- Update: `cmd_pause` prints "PAUSE REQUEST RECEIVED → Waiting for safe checkpoint" and emits `pause_confirmed` event.
+- Update: `cmd_resume` prints "RESUME REQUEST RECEIVED → Loop will continue" and emits `resume_confirmed` event.
+- Update: `cmd_stop` prints "STOP REQUEST RECEIVED → Will exit after current task" and emits `stop_confirmed` event.
+- Add: Event constants: `PAUSE_CONFIRMED`, `RESUME_CONFIRMED`, `STOP_CONFIRMED`, `CAPABILITY_UPDATED`, `CONSTITUTION_GENERATED`.
+
+**Wizard Flow Fixes (Feature 8):**
+- Update: After text-mode wizard completes, offers "Start now? [Y/n]". If yes, immediately calls `loop.run()` without returning to shell.
+- Update: After Textual wizard completes, "Launch Romyq" button calls `loop.run()` directly.
+- Update: Textual wizard routes `Input.Submitted` (Enter key in input field) to the Continue button — keyboard-primary navigation.
+
+**Tests:**
+- Add: `tests/test_capabilities.py` — 30 tests covering capability CRUD, keyword inference, history inference, formatting, constants.
+- Add: `tests/test_readiness.py` — 25 tests covering scoring, labels, weights, category mapping, path-based loading.
+- Add: `tests/test_project_timeline.py` — 20 tests covering timeline building, deduplication, action verbs, task summarization, formatting.
+- Add: `tests/test_constitution.py` — 20 tests covering section generation, file write, content correctness, atomic writes.
+- Add: `tests/test_stop_conditions.py` — 25 tests covering evaluate(), format, condition logic, threshold customization.
+- Total: **1 035 tests** (up from 885).
+
 ## 0.8.0
 
 **Project rules and governance — Romyq enforces constraints automatically.**

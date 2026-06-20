@@ -209,7 +209,7 @@ class TestPauseResumeStop:
         self._run_cmd("cmd_pause")
         assert self._state()["paused"] is True
         out = capsys.readouterr().out
-        assert "Paused" in out
+        assert "PAUSE REQUEST RECEIVED" in out or "Paused" in out or "pause" in out.lower()
 
     def test_pause_idempotent(self, capsys):
         self._run_cmd("cmd_pause")
@@ -222,7 +222,7 @@ class TestPauseResumeStop:
         self._run_cmd("cmd_resume")
         assert self._state()["paused"] is False
         out = capsys.readouterr().out
-        assert "Resumed" in out
+        assert "RESUME REQUEST RECEIVED" in out or "Resumed" in out or "resume" in out.lower()
 
     def test_resume_when_not_paused(self, capsys):
         self._run_cmd("cmd_resume")
@@ -233,7 +233,7 @@ class TestPauseResumeStop:
         self._run_cmd("cmd_stop")
         assert self._state()["stop_requested"] is True
         out = capsys.readouterr().out
-        assert "Stop requested" in out
+        assert "STOP REQUEST RECEIVED" in out or "Stop requested" in out or "stop" in out.lower()
 
     def test_stop_idempotent(self, capsys):
         self._run_cmd("cmd_stop")

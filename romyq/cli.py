@@ -790,8 +790,16 @@ def cmd_pause(args: argparse.Namespace) -> None:
         return
     state["paused"] = True
     save_state(state, s_path)
-    print("Paused. Romyq will idle after the current task completes.")
-    print("Resume with: romyq resume")
+    print("PAUSE REQUEST RECEIVED")
+    print("Waiting for safe checkpoint → loop will idle after current task.")
+    print("Check status with: romyq status")
+    print("Resume with:       romyq resume")
+    try:
+        from .events import emit as _emit
+        from . import events as _ev
+        _emit(store.events_path(workspace_path), _ev.PAUSE_CONFIRMED)
+    except Exception:
+        pass
 
 
 def cmd_resume(args: argparse.Namespace) -> None:
@@ -806,7 +814,14 @@ def cmd_resume(args: argparse.Namespace) -> None:
         return
     state["paused"] = False
     save_state(state, s_path)
-    print("Resumed. Romyq will continue on the next loop iteration.")
+    print("RESUME REQUEST RECEIVED")
+    print("Loop will continue on the next iteration.")
+    try:
+        from .events import emit as _emit
+        from . import events as _ev
+        _emit(store.events_path(workspace_path), _ev.RESUME_CONFIRMED)
+    except Exception:
+        pass
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
@@ -821,8 +836,15 @@ def cmd_stop(args: argparse.Namespace) -> None:
         return
     state["stop_requested"] = True
     save_state(state, s_path)
-    print("Stop requested. Romyq will exit after the current task completes.")
+    print("STOP REQUEST RECEIVED")
+    print("Loop will exit gracefully after the current task completes.")
     print("(If rate-limited and sleeping, it will wake early to honour the stop.)")
+    try:
+        from .events import emit as _emit
+        from . import events as _ev
+        _emit(store.events_path(workspace_path), _ev.STOP_CONFIRMED)
+    except Exception:
+        pass
 
 
 # ── planning ──────────────────────────────────────────────────────────────────
@@ -1447,6 +1469,170 @@ def cmd_decisions(args: argparse.Namespace) -> None:
     print()
 
 
+# ── readiness ────────────────────────────────────────────────────────────────
+
+def cmd_readiness(args: argparse.Namespace) -> None:
+    """Show mission readiness score across capability categories."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .readiness import compute_from_path, format_readiness
+    ps_path = store.project_state_path(workspace_path)
+    readiness = compute_from_path(ps_path)
+
+    if getattr(args, "json", False):
+        print(_json.dumps(readiness, indent=2))
+        return
+
+    print(f"romyq readiness: {root}\n")
+    print(format_readiness(readiness))
+
+    from .stop_conditions import evaluate, format_stop_conditions
+    try:
+        state = load_state(store.state_path(workspace_path))
+    except Exception:
+        state = {}
+    result = evaluate(readiness, state)
+    print()
+    print(format_stop_conditions(result))
+
+
+# ── capabilities ──────────────────────────────────────────────────────────────
+
+def cmd_capabilities(args: argparse.Namespace) -> None:
+    """Show or update the project capability model."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .capabilities import (
+        list_capabilities, format_capabilities, set_capability,
+        infer_from_history, capability_summary,
+    )
+    ps_path = store.project_state_path(workspace_path)
+
+    action = getattr(args, "action", "list") or "list"
+
+    if action == "set":
+        name = getattr(args, "name", "") or ""
+        status = getattr(args, "status", "") or ""
+        if not name or not status:
+            print("Usage: romyq capabilities set <name> <status>")
+            print("  status: missing | partial | complete")
+            sys.exit(1)
+        try:
+            set_capability(ps_path, name, status)
+            print(f"Capability updated: {name} → {status}")
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        return
+
+    if action == "infer":
+        infer_from_history(ps_path, store.history_path(workspace_path))
+        print("Capabilities inferred from task history.")
+
+    if getattr(args, "json", False):
+        print(_json.dumps(list_capabilities(ps_path), indent=2))
+        return
+
+    print(f"romyq capabilities: {root}\n")
+    caps = list_capabilities(ps_path)
+    if caps:
+        print(format_capabilities(ps_path))
+        print()
+        s = capability_summary(ps_path)
+        print(f"  Total: {s['total']}  Complete: {s['complete']}  "
+              f"Partial: {s['partial']}  Missing: {s['missing']}")
+    else:
+        print("  No capabilities tracked yet.")
+        print("  They are inferred automatically as tasks complete.")
+        print("  Or set one manually: romyq capabilities set Authentication complete")
+
+
+# ── constitution ──────────────────────────────────────────────────────────────
+
+def cmd_constitution(args: argparse.Namespace) -> None:
+    """Generate or display the project constitution (.romyq/project.md)."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .constitution import write, generate
+    ps_path = store.project_state_path(workspace_path)
+
+    if getattr(args, "print_only", False):
+        content = generate(
+            str(root),
+            rules_path=store.rules_path(workspace_path),
+            knowledge_path=store.knowledge_path(workspace_path),
+            project_state_path=ps_path,
+            events_path=store.events_path(workspace_path),
+        )
+        print(content)
+        return
+
+    path = write(
+        str(root),
+        rules_path=store.rules_path(workspace_path),
+        knowledge_path=store.knowledge_path(workspace_path),
+        project_state_path=ps_path,
+        events_path=store.events_path(workspace_path),
+    )
+    print(f"Project constitution written to {path}")
+    try:
+        from .events import emit as _emit
+        from . import events as _ev
+        _emit(store.events_path(workspace_path), _ev.CONSTITUTION_GENERATED, path=path)
+    except Exception:
+        pass
+
+
+# ── project-timeline ──────────────────────────────────────────────────────────
+
+def cmd_project_timeline(args: argparse.Namespace) -> None:
+    """Show the project evolution timeline (capability-level, not tasks)."""
+    import json as _json
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .timeline import build_timeline, format_timeline
+    h_path = store.history_path(workspace_path)
+    limit = getattr(args, "last", 20)
+
+    if getattr(args, "json", False):
+        events = build_timeline(h_path, limit=limit)
+        print(_json.dumps(events, indent=2))
+        return
+
+    print(f"romyq project-timeline: {root}\n")
+    print(format_timeline(h_path, limit=limit))
+
+
 # ── learn ─────────────────────────────────────────────────────────────────────
 
 def cmd_learn(args: argparse.Namespace) -> None:
@@ -2003,6 +2189,31 @@ def main() -> None:
         help="Output events as JSON",
     )
     p_timeline.set_defaults(func=cmd_timeline)
+
+    p_readiness = sub.add_parser("readiness", help="Show mission readiness score across categories")
+    p_readiness.add_argument("workspace", nargs="?", default=None)
+    p_readiness.add_argument("--json", action="store_true", default=False)
+    p_readiness.set_defaults(func=cmd_readiness)
+
+    p_caps = sub.add_parser("capabilities", help="Show or update the project capability model")
+    p_caps.add_argument("action", nargs="?", choices=["list", "set", "infer"], default="list")
+    p_caps.add_argument("name", nargs="?", default=None, help="Capability name (for 'set')")
+    p_caps.add_argument("status", nargs="?", default=None, help="Status: missing|partial|complete")
+    p_caps.add_argument("workspace", nargs="?", default=None)
+    p_caps.add_argument("--json", action="store_true", default=False)
+    p_caps.set_defaults(func=cmd_capabilities)
+
+    p_constitution = sub.add_parser("constitution", help="Generate project constitution (.romyq/project.md)")
+    p_constitution.add_argument("workspace", nargs="?", default=None)
+    p_constitution.add_argument("--print", dest="print_only", action="store_true", default=False,
+                                help="Print to stdout instead of writing to disk")
+    p_constitution.set_defaults(func=cmd_constitution)
+
+    p_ptimeline = sub.add_parser("project-timeline", help="Show project evolution timeline")
+    p_ptimeline.add_argument("workspace", nargs="?", default=None)
+    p_ptimeline.add_argument("--last", type=int, default=20, metavar="N")
+    p_ptimeline.add_argument("--json", action="store_true", default=False)
+    p_ptimeline.set_defaults(func=cmd_project_timeline)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

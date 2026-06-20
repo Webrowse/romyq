@@ -127,10 +127,29 @@ def _text_wizard(workspace: str, no_vcs: bool = False) -> dict:
         print(f"  {mark}  {label}: {result}")
 
     print()
-    print("  Next steps:")
     path_arg = f" {workspace}" if workspace != "." else ""
+    print("  Next steps:")
     print(f"    romyq run{path_arg}")
     print()
+
+    # Offer to start the loop immediately
+    try:
+        answer = input("  Start now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("", "y", "yes"):
+        print()
+        _print_header("Starting Romyq")
+        print()
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+        from .loop import run as _run_loop
+        _run_loop(workspace)
+    else:
+        print(f"\n  Run 'romyq run{path_arg}' whenever you are ready.")
 
     return results
 
@@ -246,9 +265,12 @@ Button { margin-top: 1; }
             ok_btn = Button("Launch Romyq", id="launch-btn", variant="success")
             self.query_one("#wizard-box").mount(ok_btn)
 
+        def on_input_submitted(self, event: object) -> None:
+            self.query_one("#wiz-btn", Button).press()
+
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if event.button.id == "launch-btn":
-                self.exit()
+                self.exit(result=True)
                 return
             inp = self.query_one("#wiz-input", Input)
             value = inp.value.strip()
@@ -284,7 +306,15 @@ Button { margin-top: 1; }
         def action_quit(self) -> None:
             self.exit()
 
-    WizardApp().run()
+    should_start = WizardApp().run()
+    if should_start and _results:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+        from .loop import run as _run_loop
+        _run_loop(workspace)
     return _results
 
 

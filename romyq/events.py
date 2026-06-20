@@ -42,6 +42,11 @@ RULE_ADDED = "rule_added"
 RULE_REMOVED = "rule_removed"
 PLAN_REPAIRED = "plan_repaired"
 DECISION_RECORDED = "decision_recorded"
+PAUSE_CONFIRMED = "pause_confirmed"
+RESUME_CONFIRMED = "resume_confirmed"
+STOP_CONFIRMED = "stop_confirmed"
+CAPABILITY_UPDATED = "capability_updated"
+CONSTITUTION_GENERATED = "constitution_generated"
 
 
 # ── core operations ───────────────────────────────────────────────────────────
