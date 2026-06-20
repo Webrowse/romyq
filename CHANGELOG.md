@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.10.1
+
+**Terminal-native operator experience — Romyq now feels like a software project manager, not a task runner.**
+
+### P0 Features
+
+- **Terminal-native wizard** (`romyq init`): Arrow key complexity selection, numbered fallback for non-TTY. All I/O injectable for tests. DeepSeek generates a lifecycle preview before you confirm.
+- **Lifecycle-first dashboard** (`romyq dashboard`): Answers all 8 operator questions from one screen — what's being built, active phase, phases remaining, completion %, current action, recommendation, can stop. Phase bars with █░ progress, overall bar, done criteria.
+- **Lifecycle visualization** (`romyq architecture`): Vertical flow diagram with ↓ arrows between phases, status icons, task counts, and completion percentages.
+- **`romyq/viz.py`**: Pure formatting functions — `progress_bar`, `format_phase_bars`, `format_overall_bar`, `format_architecture_flow`, `format_lifecycle_preview`, `format_project_overview`.
+- **Loop lifecycle header**: Each task iteration prints a compact one-line header showing current phase, task progress, readiness, and recommendation.
+- **Live operator shell** (`romyq shell`): REPL alongside `romyq run`. Builtin commands: status, roadmap, phase, capabilities, readiness, recommendation, pause, resume, stop, rules, knowledge, dashboard. Free text recorded as steering notes.
+- **Complexity is mandatory**: Wizard always requires a complexity selection (basic/intermediate/advanced). Influences phases, done criteria, and readiness thresholds.
+
+### New Modules
+- `romyq/viz.py` — pure terminal visualization functions
+- `romyq/dashboard.py` — lifecycle-first dashboard with `render()`, `render_task_header()`, `answers()`
+- `romyq/wizard_terminal.py` — terminal-native wizard with arrow key selection and architecture preview
+- `romyq/shell.py` — operator REPL with all lifecycle and control commands
+
+### CLI Changes
+- `romyq init` now delegates to the terminal wizard by default (set `ROMYQ_TEXTUAL_WIZARD=1` to use Textual UI)
+- `romyq dashboard` — new command
+- `romyq architecture` — new command
+- `romyq shell` — new command
+
+### Tests
+- 1454 passing tests (target was 1400+)
+- New: `tests/test_viz.py`, `tests/test_dashboard.py`, `tests/test_wizard_terminal.py`, `tests/test_shell_cmd.py`
+
+---
+
 ## 0.10.0
 
 **Software lifecycle management — Romyq now manages phases, not just tasks.**

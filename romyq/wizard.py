@@ -320,13 +320,21 @@ Button { margin-top: 1; }
 
 # ── public entry point ────────────────────────────────────────────────────────
 
-def run_wizard(workspace: str = ".", no_vcs: bool = False) -> dict:
-    """Run the setup wizard, using Textual if available else text-mode.
+def run_wizard(workspace: str = ".", no_vcs: bool = False, *, use_textual: bool = False) -> dict:
+    """Run the terminal-native setup wizard (default).
 
+    Pass use_textual=True (or set ROMYQ_TEXTUAL_WIZARD=1) to use the Textual UI.
     Returns the wizard_setup results dict.
     """
-    try:
-        import textual  # noqa: F401
-        return _textual_wizard(workspace=workspace, no_vcs=no_vcs)
-    except ImportError:
-        return _text_wizard(workspace=workspace, no_vcs=no_vcs)
+    import os as _os
+    force_textual = use_textual or _os.getenv("ROMYQ_TEXTUAL_WIZARD", "0") == "1"
+
+    if force_textual:
+        try:
+            import textual  # noqa: F401
+            return _textual_wizard(workspace=workspace, no_vcs=no_vcs)
+        except ImportError:
+            pass  # Fall through to terminal wizard
+
+    from .wizard_terminal import run_terminal_wizard
+    return run_terminal_wizard(workspace=workspace, no_vcs=no_vcs)

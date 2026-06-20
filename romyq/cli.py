@@ -1998,6 +1998,73 @@ def cmd_recommendation(args: argparse.Namespace) -> None:
     print(format_recommendation(result))
 
 
+# ── dashboard ────────────────────────────────────────────────────────────────
+
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    """Show the lifecycle-first project dashboard."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .dashboard import render
+    render(workspace_path)
+
+
+# ── architecture ──────────────────────────────────────────────────────────────
+
+def cmd_architecture(args: argparse.Namespace) -> None:
+    """Show the lifecycle architecture flow diagram."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    store.migrate(workspace_path)
+
+    from .lifecycle import load as lc_load
+    from .viz import format_architecture_flow
+    lc_path = store.lifecycle_path(workspace_path)
+    data = lc_load(lc_path)
+
+    if not data.get("phases"):
+        print("No lifecycle found.")
+        print("Run 'romyq run' to generate one, or set complexity with 'romyq profile'.")
+        return
+
+    print(f"romyq architecture: {root}\n")
+    print(format_architecture_flow(data))
+
+    crit = data.get("done_criteria", [])
+    if crit:
+        print()
+        print("  Done criteria:")
+        for c in crit:
+            print(f"    □ {c}")
+    print()
+
+
+# ── shell ─────────────────────────────────────────────────────────────────────
+
+def cmd_shell(args: argparse.Namespace) -> None:
+    """Launch the live operator shell alongside a running romyq loop."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+
+    from .shell import run_shell
+    run_shell(str(root))
+
+
 # ── version ───────────────────────────────────────────────────────────────────
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -2455,6 +2522,18 @@ def main() -> None:
     p_recommendation.add_argument("workspace", nargs="?", default=None)
     p_recommendation.add_argument("--json", action="store_true", default=False)
     p_recommendation.set_defaults(func=cmd_recommendation)
+
+    p_dashboard = sub.add_parser("dashboard", help="Show the lifecycle-first project dashboard")
+    p_dashboard.add_argument("workspace", nargs="?", default=None)
+    p_dashboard.set_defaults(func=cmd_dashboard)
+
+    p_architecture = sub.add_parser("architecture", help="Show the lifecycle architecture flow diagram")
+    p_architecture.add_argument("workspace", nargs="?", default=None)
+    p_architecture.set_defaults(func=cmd_architecture)
+
+    p_shell = sub.add_parser("shell", help="Launch the live operator shell alongside a running loop")
+    p_shell.add_argument("workspace", nargs="?", default=None)
+    p_shell.set_defaults(func=cmd_shell)
 
     p_pause = sub.add_parser("pause", help="Pause the loop after the current task")
     p_pause.add_argument(

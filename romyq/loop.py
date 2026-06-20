@@ -536,6 +536,13 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
             if not _lc_task_used:
                 print(f"\n{task}\n")
 
+        # Show lifecycle header before each task
+        try:
+            from .dashboard import render_task_header as _render_header
+            _render_header(workspace_path)
+        except Exception:
+            pass
+
         set_current_task(state, task)
 
         # Explain Why: compute capability and task context for dashboard
