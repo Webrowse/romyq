@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.3
+
+**Lifecycle termination & init crash fix — Romyq stops cleanly when work is done and starts reliably on deleted CWD.**
+
+### Bug Fixes
+- **`recommendation.py`**: Removed readiness threshold (`overall >= threshold`) from the Stop condition. Lifecycle completion + done criteria satisfied is now sufficient to stop, regardless of readiness score. Readiness is a soft gate for early stopping only, not a block on termination.
+- **`loop.py` — Hard stop before DeepSeek (Fix 2)**: When `next_pending_task()` returns `None` and all lifecycle phases are complete, the loop now stops before calling DeepSeek. Prevents spurious task generation on exhausted lifecycles.
+- **`loop.py` — Mission + lifecycle termination (Fix 3)**: In continuous mode (`until_complete=False`), the loop now stops when both the mission (per DeepSeek evaluation) and the lifecycle are complete. Previously it would continue indefinitely.
+- **`cli.py` — Init crash on non-existent / deleted CWD**: `cmd_init()` crashed at `Path(workspace_path).resolve()` when the target directory didn't exist or the CWD was deleted from another terminal. Replaced `resolve()` with `_safe_absolute()` that never touches the filesystem and falls back to `$PWD` when `os.getcwd()` fails. The `--no-wizard` path also now uses the resolved absolute path instead of the raw workspace string.
+
+### Tests
+- 1555 passing tests
+- New: `tests/test_init_resolve.py` — 20 regression tests covering non-existent paths, deleted CWD (subprocess), empty `ROMYQ_WORKSPACE`, and wizard path.
+- New: `tests/test_loop_lifecycle_stop.py` — 15 tests for DeepSeek guard and mission+lifecycle termination.
+- New: `tests/test_recommendation_stop.py` — 16 tests for lifecycle stop conditions across all profiles.
+
+---
+
 ## 0.10.2
 
 **Provider & planning integrity — Romyq now tells you exactly who generated what.**

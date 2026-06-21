@@ -16,20 +16,39 @@ def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
     return getattr(args, "workspace", None) or os.getenv("ROMYQ_WORKSPACE", default)
 
 
+def _safe_absolute(path_str: str) -> Path:
+    """Convert a path string to absolute without touching the filesystem.
+
+    Unlike Path.resolve() this never resolves symlinks and never raises
+    FileNotFoundError.  Relative paths are resolved against os.getcwd()
+    with a fallback to the PWD environment variable when the CWD is
+    broken (deleted directory, etc.).
+    """
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = os.environ.get("PWD") or "/"
+    return Path(cwd) / p
+
+
 # ── init ──────────────────────────────────────────────────────────────────────
 
 def cmd_init(args: argparse.Namespace) -> None:
     """Launch the interactive setup wizard."""
     workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
+    root = _safe_absolute(workspace_path)
+    root.mkdir(parents=True, exist_ok=True)
 
     no_vcs = getattr(args, "no_vcs", False)
     skip_wizard = getattr(args, "no_wizard", False)
 
     if skip_wizard:
         # Legacy: non-interactive init (old behaviour)
-        bootstrap(workspace_path)
-        store.ensure_dir(workspace_path)
+        bootstrap(str(root))
+        store.ensure_dir(str(root))
         created = create_template(str(root))
         if created:
             print("Created mission.md — edit it to describe what you want to build.")
@@ -52,7 +71,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_attach(args: argparse.Namespace) -> None:
     workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
+    root = _safe_absolute(workspace_path)
 
     print(f"Attaching Romyq to: {root}\n")
 
