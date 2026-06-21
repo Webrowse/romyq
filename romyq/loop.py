@@ -403,6 +403,26 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                     if until_complete:
                         emit(e_path, ev.LOOP_STOPPED, reason="mission_complete")
                         break
+                    # If the lifecycle is also complete, stop even without until_complete.
+                    try:
+                        import pathlib as _mc_pl
+                        from . import lifecycle as _mc_lc
+                        if _mc_pl.Path(lc_path).exists():
+                            _mc_data = _mc_lc.load(lc_path)
+                            if _mc_lc.all_phases_complete(_mc_data):
+                                activity.log(
+                                    "Mission and lifecycle both complete — stopping."
+                                )
+                                emit(
+                                    e_path,
+                                    ev.LOOP_STOPPED,
+                                    reason="mission_and_lifecycle_complete",
+                                )
+                                set_phase(state, RunState.STOPPED)
+                                save_state(state, s_path)
+                                return
+                    except Exception:
+                        pass
                     activity.log("Continuous mode — proceeding with improvements.")
                 else:
                     activity.log(f"Continuing — {reason}")
@@ -454,6 +474,26 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                 _lc_task_used = False
 
             if not _lc_task_used:
+                # Hard stop: never ask DeepSeek when the lifecycle is exhausted.
+                # next_pending_task() returns None for two reasons: no lifecycle file
+                # (DeepSeek fallback is correct) or lifecycle is complete (must stop).
+                try:
+                    import pathlib as _guard_pl
+                    from . import lifecycle as _guard_lc
+                    if _guard_pl.Path(lc_path).exists():
+                        _guard_data = _guard_lc.load(lc_path)
+                        if _guard_lc.all_phases_complete(_guard_data):
+                            activity.log(
+                                "Lifecycle complete — all phases done. Stopping cleanly."
+                            )
+                            emit(e_path, ev.LOOP_STOPPED, reason="lifecycle_complete")
+                            mark_completed(state)
+                            set_phase(state, RunState.STOPPED)
+                            save_state(state, s_path)
+                            return
+                except Exception:
+                    pass
+
                 activity.log(f"Task {task_num}  mode={mode}")
                 activity.log("Asking DeepSeek...")
                 task = manager.generate_task(

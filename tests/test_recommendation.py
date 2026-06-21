@@ -154,11 +154,13 @@ class TestRecommendThreshold:
         result = recommend(_readiness(75), lc, _state(), _profile(target=75))
         assert result["recommendation"] == "Stop"
 
-    def test_continue_just_below_threshold(self):
+    def test_stop_below_threshold_when_all_done_no_criteria(self):
+        # Readiness threshold no longer blocks Stop when lifecycle is complete and
+        # no done_criteria are pending. The threshold only gates early stopping.
         lc = _all_complete_lifecycle()
         lc["done_criteria"] = []
         result = recommend(_readiness(74), lc, _state(), _profile(target=75))
-        assert result["recommendation"] in ("Continue", "Review")
+        assert result["recommendation"] == "Stop"
 
     def test_basic_threshold_is_lower(self):
         lc = _all_complete_lifecycle()
@@ -166,11 +168,21 @@ class TestRecommendThreshold:
         result = recommend(_readiness(60), lc, _state(), _profile("basic", target=60))
         assert result["recommendation"] == "Stop"
 
-    def test_advanced_threshold_higher(self):
+    def test_advanced_stops_when_all_done_no_criteria(self):
+        # Advanced lifecycle with no done_criteria: all phases done → Stop.
+        # In practice advanced always has done_criteria; the criteria are the quality gate.
         lc = _all_complete_lifecycle()
         lc["done_criteria"] = []
         result = recommend(_readiness(80), lc, _state(), _profile("advanced", target=90))
-        assert result["recommendation"] in ("Continue", "Review")
+        assert result["recommendation"] == "Stop"
+
+    def test_advanced_review_when_criteria_pending(self):
+        # Advanced: all phases done but strict criteria not yet satisfied → Review.
+        lc = _all_complete_lifecycle()
+        lc["done_criteria"] = ["CI passes", "security requirements met"]
+        # No CI or security phase names in the complete set → criteria pending → Review
+        result = recommend(_readiness(80), lc, _state(), _profile("advanced", target=90))
+        assert result["recommendation"] == "Review"
 
 
 # ── _check_done_criteria ──────────────────────────────────────────────────────

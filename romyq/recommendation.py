@@ -175,11 +175,13 @@ def recommend(
             criteria_pending,
         )
 
-    # All phases done, all criteria met, readiness at target — recommend Stop
-    if all_done and not criteria_pending and overall >= threshold:
+    # All phases done and all criteria met — recommend Stop.
+    # Readiness threshold is a soft gate for early stopping only; it does not
+    # block termination when the lifecycle has completed its defined work.
+    if all_done and not criteria_pending:
         return _make(
             "Stop",
-            f"Readiness {overall:.0f}%, all phases complete, done criteria satisfied",
+            f"All phases complete, done criteria satisfied (readiness {overall:.0f}%)",
             overall,
             complete_phases,
             total_phases,
