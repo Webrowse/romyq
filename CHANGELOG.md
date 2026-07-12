@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+**Planner robustness, configurable provider endpoint, install fixes.**
+
+### Robustness
+- **`provider.py` (new)**: Single home for the planning-provider client. Endpoint, model, and request timeout are overridable via `ROMYQ_PLANNER_BASE_URL`, `ROMYQ_PLANNER_MODEL`, and `ROMYQ_PLANNER_TIMEOUT` (any OpenAI-compatible API). Connect timeout is 5s so an unreachable endpoint fails fast.
+- **`loop.py`**: A planner failure during task generation (network down, key rejected, rate limit) now stops the run cleanly with an actionable message instead of a traceback. A failed completion check is skipped instead of killing the loop.
+- **`manager.py`**: Guards against empty planner responses.
+
+### Packaging & docs
+- Homebrew formula installed a virtualenv with **no dependencies** — every real command crashed with `ModuleNotFoundError`. Fixed in the tap (webrowse/street); the formula test now imports the full dependency chain.
+- PyPI project URLs pointed at a nonexistent GitHub repository; now `Webrowse/romyq` plus romyq.com links.
+- README: quick start no longer references `.env.example` (not present in user projects); documents Homebrew install, the eight lifecycle commands, and planner configuration.
+
+### Cleanup
+- Removed `health_score.py` (never wired into any command) and an obfuscated no-op block in `constitution.py`.
+- `cli.py`: 33 copies of workspace-resolution boilerplate folded into `_require_workspace()` (−187 lines).
+- `romyq version` no longer prints a venv warning aimed at maintainers.
+
+### Tests
+- New: `tests/test_provider.py` — provider configuration and error-mapping tests.
+
+---
+
 ## 0.10.3
 
 **Lifecycle termination & init crash fix — Romyq stops cleanly when work is done and starts reliably on deleted CWD.**
