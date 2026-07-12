@@ -16,6 +16,20 @@ def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
     return getattr(args, "workspace", None) or os.getenv("ROMYQ_WORKSPACE", default)
 
 
+def _require_workspace(
+    args: argparse.Namespace, migrate: bool = True
+) -> tuple[str, Path]:
+    """Resolve the workspace or exit(1); optionally run store migration."""
+    workspace_path = _resolve_workspace(args)
+    root = Path(workspace_path).resolve()
+    if not root.is_dir():
+        print(f"Workspace not found: {workspace_path}")
+        sys.exit(1)
+    if migrate:
+        store.migrate(workspace_path)
+    return workspace_path, root
+
+
 def _safe_absolute(path_str: str) -> Path:
     """Convert a path string to absolute without touching the filesystem.
 
@@ -278,11 +292,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_steer(args: argparse.Namespace) -> None:
     """Record an operator instruction for the active loop."""
-    workspace_path = _resolve_workspace(args)
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
     from .steering import record_instruction
     instruction = args.instruction.strip()
     if not instruction:
@@ -298,13 +308,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     import json as _json
     from dotenv import load_dotenv
     load_dotenv()
-    workspace_path = _resolve_workspace(args)
-
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     try:
         state = load_state(store.state_path(workspace_path))
@@ -352,13 +356,7 @@ def cmd_explain(args: argparse.Namespace) -> None:
     """Show the full diagnostic picture for the current loop state."""
     from dotenv import load_dotenv
     load_dotenv()
-    workspace_path = _resolve_workspace(args)
-
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     try:
         state = load_state(store.state_path(workspace_path))
@@ -446,13 +444,7 @@ def cmd_explain(args: argparse.Namespace) -> None:
 def cmd_logs(args: argparse.Namespace) -> None:
     from dotenv import load_dotenv
     load_dotenv()
-    workspace_path = _resolve_workspace(args)
-
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     entries = recent(limit=args.last, path=store.history_path(workspace_path))
 
@@ -531,14 +523,7 @@ def cmd_health(args: argparse.Namespace) -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     W = 16
 
@@ -645,14 +630,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     from dotenv import load_dotenv
     load_dotenv()
 
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     SEP = "─" * 56
 
@@ -755,11 +733,7 @@ def cmd_ui(args: argparse.Namespace) -> None:
         print("  pip install textual")
         sys.exit(1)
 
-    workspace_path = _resolve_workspace(args)
-
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
 
     launch(workspace_path)
 
@@ -771,12 +745,7 @@ def cmd_events(args: argparse.Namespace) -> None:
     load_dotenv()
     from .events import tail
 
-    workspace_path = _resolve_workspace(args)
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
     e_path = store.events_path(workspace_path)
     events = tail(e_path, n=args.last)
 
@@ -798,10 +767,7 @@ def cmd_events(args: argparse.Namespace) -> None:
 # ── pause / resume / stop ─────────────────────────────────────────────────────
 
 def cmd_pause(args: argparse.Namespace) -> None:
-    workspace_path = _resolve_workspace(args)
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
     s_path = store.state_path(workspace_path)
     state = load_state(s_path)
     if state.get("paused"):
@@ -822,10 +788,7 @@ def cmd_pause(args: argparse.Namespace) -> None:
 
 
 def cmd_resume(args: argparse.Namespace) -> None:
-    workspace_path = _resolve_workspace(args)
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
     s_path = store.state_path(workspace_path)
     state = load_state(s_path)
     if not state.get("paused"):
@@ -844,10 +807,7 @@ def cmd_resume(args: argparse.Namespace) -> None:
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
-    workspace_path = _resolve_workspace(args)
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
     s_path = store.state_path(workspace_path)
     state = load_state(s_path)
     if state.get("stop_requested"):
@@ -871,14 +831,7 @@ def cmd_stop(args: argparse.Namespace) -> None:
 def cmd_planning(args: argparse.Namespace) -> None:
     """Show the full planning context that would be injected into the next DeepSeek call."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     try:
         state = load_state(store.state_path(workspace_path))
@@ -1043,14 +996,7 @@ def cmd_planning(args: argparse.Namespace) -> None:
 def cmd_memory(args: argparse.Namespace) -> None:
     """Show execution memory analysis: failures, blocked tasks, and loop detection."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from . import memory as mem_mod
     from .health_checks import detect_planner_loops
@@ -1135,14 +1081,7 @@ def cmd_memory(args: argparse.Namespace) -> None:
 def cmd_plan(args: argparse.Namespace) -> None:
     """Show the mission decomposition plan."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .decomposition import load_plan, format_plan, plan_summary
 
@@ -1179,14 +1118,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
 def cmd_knowledge(args: argparse.Namespace) -> None:
     """Show knowledge base summary: lessons, failure patterns, freshness."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from . import knowledge as know_mod
 
@@ -1280,14 +1212,7 @@ def cmd_knowledge(args: argparse.Namespace) -> None:
 def cmd_patterns(args: argparse.Namespace) -> None:
     """Show extracted failure and success patterns from the knowledge base."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from . import knowledge as know_mod
 
@@ -1348,14 +1273,7 @@ def cmd_patterns(args: argparse.Namespace) -> None:
 def cmd_rules(args: argparse.Namespace) -> None:
     """Manage project rules."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .rules import (
         add_rule, remove_rule, list_rules as list_active_rules,
@@ -1438,14 +1356,7 @@ def cmd_rules(args: argparse.Namespace) -> None:
 def cmd_decisions(args: argparse.Namespace) -> None:
     """Show the governance decision log."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .decisions import recent as recent_decisions, count as decisions_count, count_by_type as dec_by_type
 
@@ -1492,14 +1403,7 @@ def cmd_decisions(args: argparse.Namespace) -> None:
 def cmd_readiness(args: argparse.Namespace) -> None:
     """Show mission readiness score across capability categories."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .readiness import compute_from_path, format_readiness
     ps_path = store.project_state_path(workspace_path)
@@ -1527,14 +1431,7 @@ def cmd_readiness(args: argparse.Namespace) -> None:
 def cmd_capabilities(args: argparse.Namespace) -> None:
     """Show or update the project capability model."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .capabilities import (
         list_capabilities, format_capabilities, set_capability,
@@ -1585,14 +1482,7 @@ def cmd_capabilities(args: argparse.Namespace) -> None:
 
 def cmd_constitution(args: argparse.Namespace) -> None:
     """Generate or display the project constitution (.romyq/project.md)."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .constitution import write, generate
     ps_path = store.project_state_path(workspace_path)
@@ -1629,14 +1519,7 @@ def cmd_constitution(args: argparse.Namespace) -> None:
 def cmd_project_timeline(args: argparse.Namespace) -> None:
     """Show the project evolution timeline (capability-level, not tasks)."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .timeline import build_timeline, format_timeline
     h_path = store.history_path(workspace_path)
@@ -1655,12 +1538,7 @@ def cmd_project_timeline(args: argparse.Namespace) -> None:
 
 def cmd_learn(args: argparse.Namespace) -> None:
     """Generate or refresh .romyq/context.md from static analysis."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
 
     store.ensure_dir(workspace_path)
 
@@ -1677,14 +1555,7 @@ def cmd_learn(args: argparse.Namespace) -> None:
 def cmd_stats(args: argparse.Namespace) -> None:
     """Show long-run operational statistics."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     try:
         state = load_state(store.state_path(workspace_path))
@@ -1748,13 +1619,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 def cmd_timeline(args: argparse.Namespace) -> None:
     """Show a human-readable event timeline."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-
-    if not Path(workspace_path).is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .events import tail
     events = tail(store.events_path(workspace_path), n=args.last)
@@ -1807,14 +1672,7 @@ def cmd_timeline(args: argparse.Namespace) -> None:
 def cmd_roadmap(args: argparse.Namespace) -> None:
     """Show the lifecycle roadmap with phase progress."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .lifecycle import load as lc_load, format_roadmap, progress_summary
     lc_path = store.lifecycle_path(workspace_path)
@@ -1858,14 +1716,7 @@ def cmd_roadmap(args: argparse.Namespace) -> None:
 def cmd_lifecycle(args: argparse.Namespace) -> None:
     """Show or manage the software lifecycle."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .lifecycle import (
         load as lc_load, format_roadmap, format_current_phase,
@@ -1933,14 +1784,7 @@ def cmd_lifecycle(args: argparse.Namespace) -> None:
 
 def cmd_phase(args: argparse.Namespace) -> None:
     """Show the current lifecycle phase and its tasks."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .lifecycle import load as lc_load, format_current_phase, current_phase
     lc_path = store.lifecycle_path(workspace_path)
@@ -1965,12 +1809,7 @@ def cmd_phase(args: argparse.Namespace) -> None:
 
 def cmd_profile(args: argparse.Namespace) -> None:
     """Show or set the project complexity profile."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
 
     store.ensure_dir(workspace_path)
 
@@ -1996,14 +1835,7 @@ def cmd_profile(args: argparse.Namespace) -> None:
 def cmd_recommendation(args: argparse.Namespace) -> None:
     """Show the current project recommendation (Continue/Pause/Review/Stop)."""
     import json as _json
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .recommendation import recommend_from_paths, format_recommendation
     result = recommend_from_paths(workspace_path=workspace_path)
@@ -2020,14 +1852,7 @@ def cmd_recommendation(args: argparse.Namespace) -> None:
 
 def cmd_dashboard(args: argparse.Namespace) -> None:
     """Show the lifecycle-first project dashboard."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .dashboard import render
     render(workspace_path)
@@ -2037,14 +1862,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
 
 def cmd_architecture(args: argparse.Namespace) -> None:
     """Show the lifecycle architecture flow diagram."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
-
-    store.migrate(workspace_path)
+    workspace_path, root = _require_workspace(args)
 
     from .lifecycle import load as lc_load
     from .viz import format_architecture_flow
@@ -2072,12 +1890,7 @@ def cmd_architecture(args: argparse.Namespace) -> None:
 
 def cmd_shell(args: argparse.Namespace) -> None:
     """Launch the live operator shell alongside a running romyq loop."""
-    workspace_path = _resolve_workspace(args)
-    root = Path(workspace_path).resolve()
-
-    if not root.is_dir():
-        print(f"Workspace not found: {workspace_path}")
-        sys.exit(1)
+    workspace_path, root = _require_workspace(args, migrate=False)
 
     from .shell import run_shell
     run_shell(str(root))
