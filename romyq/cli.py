@@ -888,7 +888,6 @@ def cmd_planning(args: argparse.Namespace) -> None:
     from .context import load as ctx_load
     from .planning import build_planning_context
     from .health_checks import detect_planner_loops
-    from .loop_detector import detect as detect_loops
 
     ctx_text = ctx_load(workspace_path)
     mem_path = store.memory_path(workspace_path)

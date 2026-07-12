@@ -42,13 +42,6 @@ def _section_rules(rules_path: str) -> str:
 
 def _section_knowledge(knowledge_path: str, max_lessons: int = 10) -> str:
     try:
-        with __import__("json").loads(
-            open(knowledge_path, encoding="utf-8").read()
-        ) if False else _noop() as _:
-            pass
-    except Exception:
-        pass
-    try:
         import json
         with open(knowledge_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -67,13 +60,6 @@ def _section_knowledge(knowledge_path: str, max_lessons: int = 10) -> str:
     for lesson in lessons:
         lines.append(f"- {lesson}")
     return "\n".join(lines)
-
-
-def _noop():
-    class _Ctx:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-    return _Ctx()
 
 
 def _section_capabilities(project_state_path: str) -> str:
@@ -112,8 +98,7 @@ def _section_priorities(rules_path: str, events_path: str) -> str:
     try:
         from .stop_conditions import evaluate
         from .readiness import compute_from_path
-        from .capabilities import list_capabilities
-        import json, os
+        import os
         # find project_state_path from same dir as rules_path
         ps_path = os.path.join(os.path.dirname(rules_path), "project_state.json")
         r = compute_from_path(ps_path)

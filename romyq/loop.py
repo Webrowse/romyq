@@ -559,7 +559,7 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
 
             # Rule guardrail check: reject tasks violating project rules
             try:
-                from .rule_guardrails import check_task_against_rules, build_rule_violation_context
+                from .rule_guardrails import check_task_against_rules
                 from .decisions import record as record_decision
                 rule_violation = check_task_against_rules(task, rules_path)
                 if rule_violation:
