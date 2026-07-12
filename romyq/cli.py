@@ -140,8 +140,13 @@ def cmd_attach(args: argparse.Namespace) -> None:
     path_arg = f" {workspace_path}" if workspace_path != "." else ""
     print("\nNext steps:")
     print("  1. Edit mission.md — describe your goals for this project")
-    print(f"  2. romyq info{path_arg}")
-    print(f"  3. romyq run{path_arg}")
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        print("  2. Set DEEPSEEK_API_KEY in .env — e.g. echo \"DEEPSEEK_API_KEY=sk-...\" >> .env")
+        print(f"  3. romyq doctor{path_arg}")
+        print(f"  4. romyq run{path_arg}")
+    else:
+        print(f"  2. romyq doctor{path_arg}")
+        print(f"  3. romyq run{path_arg}")
 
 
 # ── note ──────────────────────────────────────────────────────────────────────
