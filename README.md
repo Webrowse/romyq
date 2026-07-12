@@ -12,7 +12,8 @@ It plans, codes, commits, audits, and keeps improving until you stop it.
 ## Install
 
 ```bash
-pip install romyq
+brew install webrowse/street/romyq   # macOS / Linux (Homebrew)
+pip install romyq                    # any platform with Python 3.10+
 ```
 
 ---
@@ -24,10 +25,20 @@ mkdir my-project
 cd my-project
 git init
 
-cp .env.example .env
-# Open .env and add your DEEPSEEK_API_KEY
+romyq init
+# The wizard asks for your mission, complexity profile,
+# and DeepSeek API key, then writes .env and mission.md.
 
-romyq attach
+romyq doctor
+romyq run
+```
+
+Attaching to an existing repository instead:
+
+```bash
+cd my-existing-project
+romyq attach                             # creates .romyq/ and a mission.md template
+echo "DEEPSEEK_API_KEY=sk-..." >> .env   # set your key
 # Edit mission.md — describe what you want built
 
 romyq doctor
@@ -87,7 +98,20 @@ That's it. Romyq takes over from here.
 | `romyq stats [--json]` | Long-run operational statistics: tasks, validator rates, runtime |
 | `romyq timeline [--last N] [--json]` | Human-readable event timeline |
 
-**Governance & Visibility (0.9.0)**
+**Lifecycle**
+
+| Command | Description |
+|---|---|
+| `romyq roadmap` | Show the lifecycle roadmap with phase progress |
+| `romyq lifecycle` | Show or manage the software lifecycle |
+| `romyq phase` | Show the current lifecycle phase and tasks |
+| `romyq profile` | Show or set the project complexity profile |
+| `romyq recommendation` | Show the current Continue / Pause / Review / Stop recommendation |
+| `romyq dashboard` | Show the lifecycle-first project dashboard |
+| `romyq architecture` | Show the lifecycle architecture flow diagram |
+| `romyq shell` | Launch the live operator shell alongside a running loop |
+
+**Governance & Visibility**
 
 | Command | Description |
 |---|---|
@@ -116,23 +140,17 @@ That's it. Romyq takes over from here.
 | Command | Description |
 |---|---|
 | `romyq version` | Show version, install type, and Python version |
-| `romyq ui` | Launch the Textual TUI dashboard (coming soon) |
+| `romyq ui` | Launch the Textual TUI dashboard (`pip install 'romyq[ui]'`) |
 
 ---
 
 ## Configuration
 
-Copy the example file and fill in your keys:
-
-```bash
-cp .env.example .env
-```
-
-`.env.example`:
+Romyq reads a `.env` file from your project directory (`romyq init` writes it for you):
 
 ```
-DEEPSEEK_API_KEY=
-ROMYQ_CLAUDE_TIMEOUT=1800
+DEEPSEEK_API_KEY=sk-...      # required — planning provider
+ROMYQ_CLAUDE_TIMEOUT=1800    # optional — per-task Claude timeout in seconds
 ```
 
 ---

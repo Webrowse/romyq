@@ -38,8 +38,10 @@ dev = ["pytest>=7.0"]
 ui  = ["textual>=0.50"]
 
 [project.urls]
-Repository = "https://github.com/adarsh/romyq"
-Issues = "https://github.com/adarsh/romyq/issues"
+Homepage = "https://romyq.com"
+Documentation = "https://romyq.com/docs"
+Repository = "https://github.com/Webrowse/romyq"
+Issues = "https://github.com/Webrowse/romyq/issues"
 
 [project.scripts]
 romyq = "romyq.cli:main"
