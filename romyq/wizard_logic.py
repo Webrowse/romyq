@@ -28,13 +28,10 @@ Each endpoint must have at least one test.
 Commit working code after each endpoint is implemented.
 """
 
+from .provider import KNOWN_PROVIDERS
+
 PROVIDERS: dict[str, dict] = {
-    "deepseek": {
-        "name": "DeepSeek",
-        "key_var": "DEEPSEEK_API_KEY",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat",
-    },
+    pid: {"name": cfg["label"], **cfg} for pid, cfg in KNOWN_PROVIDERS.items()
 }
 
 
@@ -49,29 +46,44 @@ def validate_api_key(key: str, provider: str = "deepseek") -> bool:
     return len(key) >= 10
 
 
-def write_env(workspace: str, api_key: str, provider: str = "deepseek") -> str:
-    """Write or update the provider API key in workspace/.env.
+def write_env(
+    workspace: str,
+    api_key: str,
+    provider: str = "deepseek",
+    base_url: str = "",
+    model: str = "",
+) -> str:
+    """Write or update the planner configuration in workspace/.env.
 
-    Creates the file if absent; updates the key line if present.
+    DeepSeek writes only DEEPSEEK_API_KEY (backward compatible). Any other
+    provider writes the ROMYQ_PLANNER_* trio so the runtime targets the
+    right endpoint. Creates the file if absent; updates lines in place.
     Returns the path to .env.
     """
     env_path = Path(workspace) / ".env"
-    provider_cfg = PROVIDERS.get(provider, PROVIDERS["deepseek"])
-    key_var = provider_cfg["key_var"]
-    key_line = f"{key_var}={api_key.strip()}"
+
+    if provider == "deepseek":
+        entries = [("DEEPSEEK_API_KEY", api_key.strip())]
+    else:
+        cfg = PROVIDERS.get(provider, {})
+        entries = [
+            ("ROMYQ_PLANNER_API_KEY", api_key.strip()),
+            ("ROMYQ_PLANNER_BASE_URL", base_url or cfg.get("base_url", "")),
+            ("ROMYQ_PLANNER_MODEL", model or cfg.get("model", "")),
+        ]
 
     lines: list[str] = []
     if env_path.exists():
         lines = env_path.read_text(encoding="utf-8").splitlines()
 
-    replaced = False
-    for i, line in enumerate(lines):
-        if line.startswith(f"{key_var}="):
-            lines[i] = key_line
-            replaced = True
-            break
-    if not replaced:
-        lines.append(key_line)
+    for var, value in entries:
+        new_line = f"{var}={value}"
+        for i, line in enumerate(lines):
+            if line.startswith(f"{var}="):
+                lines[i] = new_line
+                break
+        else:
+            lines.append(new_line)
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(env_path)
@@ -146,6 +158,8 @@ def wizard_setup(
     mission_text: str,
     provider: str = "deepseek",
     init_git: bool = True,
+    base_url: str = "",
+    model: str = "",
 ) -> dict[str, str]:
     """Execute the complete wizard setup sequence.
 
@@ -156,7 +170,7 @@ def wizard_setup(
 
     # 1. API key
     try:
-        write_env(workspace, api_key, provider)
+        write_env(workspace, api_key, provider, base_url=base_url, model=model)
         results["api_key"] = "configured"
     except Exception as e:
         results["api_key"] = f"failed: {e}"

@@ -15,9 +15,34 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_TIMEOUT_S = 600.0
 
+# Named providers the wizard offers. Any other OpenAI-compatible endpoint
+# works via the ROMYQ_PLANNER_* variables ("custom" in the wizard).
+KNOWN_PROVIDERS: dict[str, dict] = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "key_var": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "key_hint": "platform.deepseek.com",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "key_var": "ROMYQ_PLANNER_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "key_hint": "platform.openai.com",
+    },
+}
+
 
 class PlannerError(Exception):
     """A planner API call failed. The message is operator-facing."""
+
+
+def api_key() -> str:
+    """The planner API key: ROMYQ_PLANNER_API_KEY wins, DEEPSEEK_API_KEY is
+    the backward-compatible fallback."""
+    return os.getenv("ROMYQ_PLANNER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or ""
 
 
 def base_url() -> str:

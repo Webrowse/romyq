@@ -16,6 +16,21 @@ def _resolve_workspace(args: argparse.Namespace, default: str = ".") -> str:
     return getattr(args, "workspace", None) or os.getenv("ROMYQ_WORKSPACE", default)
 
 
+def _load_env(workspace: str | None = None) -> None:
+    """Load .env from the workspace and the current directory.
+
+    load_dotenv() with no arguments searches upward from the *calling
+    file* — site-packages for an installed CLI — so a project .env would
+    never be found. Existing environment variables are never overridden.
+    """
+    from dotenv import find_dotenv, load_dotenv
+    if workspace:
+        env_file = Path(workspace) / ".env"
+        if env_file.is_file():
+            load_dotenv(env_file)
+    load_dotenv(find_dotenv(usecwd=True))
+
+
 def _require_workspace(
     args: argparse.Namespace, migrate: bool = True
 ) -> tuple[str, Path]:
@@ -276,10 +291,10 @@ def cmd_info(args: argparse.Namespace) -> None:
 # ── run ───────────────────────────────────────────────────────────────────────
 
 def cmd_run(args: argparse.Namespace) -> None:
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     workspace_path = _resolve_workspace(args)
+    _load_env(workspace_path)
 
     if not mission_exists():
         print("Error: mission.md not found. Run 'romyq init' or 'romyq attach' first.")
@@ -311,8 +326,7 @@ def cmd_steer(args: argparse.Namespace) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     import json as _json
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
     workspace_path, root = _require_workspace(args)
 
     try:
@@ -359,8 +373,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_explain(args: argparse.Namespace) -> None:
     """Show the full diagnostic picture for the current loop state."""
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
     workspace_path, root = _require_workspace(args)
 
     try:
@@ -447,8 +460,7 @@ def cmd_explain(args: argparse.Namespace) -> None:
 # ── logs ──────────────────────────────────────────────────────────────────────
 
 def cmd_logs(args: argparse.Namespace) -> None:
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
     workspace_path, root = _require_workspace(args)
 
     entries = recent(limit=args.last, path=store.history_path(workspace_path))
@@ -469,8 +481,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
 # ── doctor ────────────────────────────────────────────────────────────────────
 
 def cmd_doctor(args: argparse.Namespace) -> None:
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     ok = True
 
@@ -486,8 +497,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     print("romyq doctor\n")
 
-    api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    check("DEEPSEEK_API_KEY", bool(api_key), "set" if api_key else "missing — add to .env")
+    from .provider import api_key as planner_api_key
+    api_key = planner_api_key()
+    key_var = "ROMYQ_PLANNER_API_KEY" if os.getenv("ROMYQ_PLANNER_API_KEY") else "DEEPSEEK_API_KEY"
+    check(key_var, bool(api_key), "set" if api_key else "missing — add to .env")
 
     claude_bin = shutil.which("claude")
     check("claude CLI", bool(claude_bin), claude_bin or "not found in PATH")
@@ -525,8 +538,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 def cmd_health(args: argparse.Namespace) -> None:
     from datetime import datetime, timezone
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     workspace_path, root = _require_workspace(args)
 
@@ -632,8 +644,7 @@ def cmd_health(args: argparse.Namespace) -> None:
 # ── report ────────────────────────────────────────────────────────────────────
 
 def cmd_report(args: argparse.Namespace) -> None:
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     workspace_path, root = _require_workspace(args)
 
@@ -746,8 +757,7 @@ def cmd_ui(args: argparse.Namespace) -> None:
 # ── events ───────────────────────────────────────────────────────────────────
 
 def cmd_events(args: argparse.Namespace) -> None:
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
     from .events import tail
 
     workspace_path, root = _require_workspace(args)

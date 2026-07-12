@@ -143,7 +143,7 @@ def _text_wizard(workspace: str, no_vcs: bool = False) -> dict:
         print()
         try:
             from dotenv import load_dotenv
-            load_dotenv()
+            load_dotenv(Path(workspace) / ".env")
         except Exception:
             pass
         from .loop import run as _run_loop
@@ -310,7 +310,7 @@ Button { margin-top: 1; }
     if should_start and _results:
         try:
             from dotenv import load_dotenv
-            load_dotenv()
+            load_dotenv(Path(workspace) / ".env")
         except Exception:
             pass
         from .loop import run as _run_loop

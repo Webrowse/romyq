@@ -4,6 +4,13 @@
 
 **Planner robustness, configurable provider endpoint, install fixes.**
 
+### Provider choice
+- **Wizard**: `romyq init` now offers DeepSeek, OpenAI, or any custom OpenAI-compatible endpoint. Typing `b` at any sub-prompt returns to the provider menu, so a wrong choice can be corrected. Non-DeepSeek selections write `ROMYQ_PLANNER_API_KEY/BASE_URL/MODEL` to `.env`.
+- **`provider.api_key()`**: `ROMYQ_PLANNER_API_KEY` takes precedence, `DEEPSEEK_API_KEY` remains the backward-compatible fallback. `romyq run` and `romyq doctor` accept either.
+
+### Bug fixes
+- **`.env` never loaded for installed CLIs**: `load_dotenv()` with no arguments searches upward from the *calling file* — site-packages for a brew/pipx/global pip install — so the project `.env` was silently ignored and `romyq run` reported a missing API key even when `.env` was correct. All commands now load the workspace (or CWD) `.env` explicitly. Development checkouts masked this because the search found the repo's own `.env`.
+
 ### Robustness
 - **`provider.py` (new)**: Single home for the planning-provider client. Endpoint, model, and request timeout are overridable via `ROMYQ_PLANNER_BASE_URL`, `ROMYQ_PLANNER_MODEL`, and `ROMYQ_PLANNER_TIMEOUT` (any OpenAI-compatible API). Connect timeout is 5s so an unreachable endpoint fails fast.
 - **`loop.py`**: A planner failure during task generation (network down, key rejected, rate limit) now stops the run cleanly with an actionable message instead of a traceback. A failed completion check is skipped instead of killing the loop.

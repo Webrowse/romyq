@@ -167,6 +167,106 @@ def select_option(
         print(_dim("\n  ↑↓ arrows, Enter to select"), end="", flush=True, file=_out)
 
 
+# ── provider selection ────────────────────────────────────────────────────────
+
+PROVIDER_MENU = [
+    ("deepseek", "DeepSeek",        "deepseek-chat  (recommended)"),
+    ("openai",   "OpenAI",          "gpt-4o-mini"),
+    ("custom",   "Other",           "any OpenAI-compatible endpoint"),
+    ("later",    "Configure later", "run without a key — lifecycle uses a local fallback"),
+]
+
+
+def _select_provider(
+    pr,
+    sep: str,
+    read_line_fn,
+    getpass_fn=None,
+) -> tuple[str, str, str, str]:
+    """Interactive provider selection with back navigation.
+
+    Returns (api_key, provider_id, base_url, model). An empty api_key
+    means "configure later". Typing 'b' at any sub-prompt returns to the
+    provider menu so a wrong choice can be corrected.
+    """
+    from .provider import KNOWN_PROVIDERS
+
+    if getpass_fn is None:
+        import getpass
+        getpass_fn = getpass.getpass
+
+    while True:
+        pr(sep)
+        pr("  Provider")
+        pr(sep)
+        pr()
+        for i, (_, label, desc) in enumerate(PROVIDER_MENU, 1):
+            pr(f"  [{i}] {label:<16} {desc}")
+        pr()
+        try:
+            choice = read_line_fn(f"  Select [1-{len(PROVIDER_MENU)}]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = str(len(PROVIDER_MENU))
+
+        if choice in (str(len(PROVIDER_MENU)), "later", "n", ""):
+            pr()
+            pr("  ! No provider configured.")
+            pr("    Lifecycle will use a local fallback.")
+            pr("    Set DEEPSEEK_API_KEY in .env — or rerun 'romyq init' — before running.")
+            pr()
+            return "", "deepseek", "", ""
+
+        if choice not in ("1", "2", "3"):
+            pr()
+            pr(f"  Enter a number between 1 and {len(PROVIDER_MENU)}.")
+            pr()
+            continue
+
+        provider_id, label, _ = PROVIDER_MENU[int(choice) - 1]
+        cfg = KNOWN_PROVIDERS.get(provider_id, {})
+        base_url = cfg.get("base_url", "")
+        model = cfg.get("model", "")
+
+        if provider_id == "custom":
+            pr()
+            pr("  OpenAI-compatible endpoint  ('b' to go back)")
+            pr()
+            try:
+                base_url = read_line_fn("  Base URL (e.g. https://api.example.com/v1): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                base_url = "b"
+            if base_url.lower() == "b" or not base_url:
+                continue
+            try:
+                model = read_line_fn("  Model name: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                model = "b"
+            if model.lower() == "b" or not model:
+                continue
+            label = "Custom endpoint"
+
+        pr()
+        hint = f"  ({cfg['key_hint']})" if cfg.get("key_hint") else ""
+        pr(f"  {label} API key{hint} — enter 'b' to go back")
+        pr()
+        try:
+            api_key = getpass_fn("  API Key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            api_key = ""
+        if api_key.lower() == "b":
+            pr()
+            continue
+        if not api_key:
+            pr()
+            pr("  ! No API key entered.")
+            pr("    Lifecycle will use a local fallback.")
+            pr("    You can set the key later and run: romyq run")
+            pr()
+            return "", provider_id, base_url, model
+
+        return api_key, provider_id, base_url, model
+
+
 # ── architecture preview ──────────────────────────────────────────────────────
 
 def generate_architecture_preview(
@@ -242,6 +342,7 @@ def run_terminal_wizard(
     no_vcs: bool = False,
     _keypress_fn: Callable[[], str] | None = None,
     _read_line_fn: Callable[[str], str] | None = None,
+    _getpass_fn: Callable[[str], str] | None = None,
     _out=None,
     _generate_preview: bool = True,
 ) -> dict:
@@ -280,47 +381,36 @@ def run_terminal_wizard(
     pr()
 
     # ── Provider / API Key ────────────────────────────────────────────────────
+    from .provider import KNOWN_PROVIDERS
     _key_source = ""
+    _env_key_var = ""
+    provider_id = "deepseek"
+    provider_base_url = ""
+    provider_model = ""
     if not api_key:
         import os as _os
-        api_key = _os.getenv("DEEPSEEK_API_KEY", "")
-        if api_key:
-            _key_source = "environment"
+        if _os.getenv("ROMYQ_PLANNER_API_KEY"):
+            api_key = _os.getenv("ROMYQ_PLANNER_API_KEY", "")
+            _key_source, _env_key_var = "environment", "ROMYQ_PLANNER_API_KEY"
+        elif _os.getenv("DEEPSEEK_API_KEY"):
+            api_key = _os.getenv("DEEPSEEK_API_KEY", "")
+            _key_source, _env_key_var = "environment", "DEEPSEEK_API_KEY"
         else:
-            pr(SEP)
-            pr("  Provider")
-            pr(SEP)
-            pr()
-            pr("  Select provider: [1] DeepSeek  [2] Configure Later")
-            pr()
-            try:
-                provider_choice = _read_line_fn("  Select [1/2]: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                provider_choice = "2"
+            api_key, provider_id, provider_base_url, provider_model = _select_provider(
+                pr, SEP, _read_line_fn, _getpass_fn
+            )
+            if api_key:
+                _key_source = "entered"
+                if provider_id != "deepseek":
+                    # Preview and immediate launch read the endpoint from env.
+                    _os.environ["ROMYQ_PLANNER_API_KEY"] = api_key
+                    _os.environ["ROMYQ_PLANNER_BASE_URL"] = provider_base_url
+                    _os.environ["ROMYQ_PLANNER_MODEL"] = provider_model
 
-            if provider_choice != "2":
-                pr()
-                pr("  DeepSeek API Key")
-                pr()
-                try:
-                    import getpass
-                    api_key = getpass.getpass("  API Key: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    api_key = ""
-                if api_key:
-                    _key_source = "entered"
-                else:
-                    pr()
-                    pr("  ! No API key entered.")
-                    pr("    Lifecycle will use a local fallback.")
-                    pr("    You can set DEEPSEEK_API_KEY later and run: romyq run")
-                    pr()
-            else:
-                pr()
-                pr("  ! No provider configured.")
-                pr("    Lifecycle will use a local fallback.")
-                pr("    Set DEEPSEEK_API_KEY in .env or your environment before running.")
-                pr()
+    provider_label = (
+        KNOWN_PROVIDERS.get(provider_id, {}).get("label", "Custom endpoint")
+        if provider_id != "custom" else "Custom endpoint"
+    )
 
     if api_key and not _key_source:
         _key_source = "parameter"
@@ -330,7 +420,8 @@ def run_terminal_wizard(
         pr("  Provider")
         pr(SEP)
         pr()
-        pr("  ✓ DeepSeek — key found in environment (DEEPSEEK_API_KEY)")
+        _env_label = "DeepSeek" if _env_key_var == "DEEPSEEK_API_KEY" else "Planner"
+        pr(f"  ✓ {_env_label} — key found in environment ({_env_key_var})")
         pr()
 
     # ── Complexity ────────────────────────────────────────────────────────────
@@ -359,20 +450,20 @@ def run_terminal_wizard(
             if _lc_source == "local_fallback":
                 pr()
                 pr()
-                pr("  ! DeepSeek unavailable — lifecycle uses local fallback.")
-                pr("    Verify DEEPSEEK_API_KEY is valid. The fallback lifecycle")
+                pr(f"  ! {provider_label} unavailable — lifecycle uses local fallback.")
+                pr("    Verify your API key is valid. The fallback lifecycle")
                 pr("    is generic and not tailored to your mission.")
                 pr()
             else:
                 pr("  done.")
                 pr()
-                pr("  Lifecycle generated by: DeepSeek")
+                pr(f"  Lifecycle generated by: {provider_label}")
             print_architecture_preview(lc_data, complexity_label, out=_out)
         else:
             pr("  (preview unavailable — lifecycle will generate on first run)")
             pr()
     elif not api_key:
-        pr("  (lifecycle preview skipped — no DeepSeek API key configured)")
+        pr("  (lifecycle preview skipped — no planner API key configured)")
         pr("  Lifecycle will use a local fallback when the loop starts.")
         pr()
 
@@ -387,11 +478,14 @@ def run_terminal_wizard(
         path_arg = f" {workspace}" if workspace != "." else ""
         pr(f"  Run 'romyq run{path_arg}' when ready.")
         pr()
-        _run_setup(workspace, api_key, mission_text, complexity_key, no_vcs, lc_data)
+        _run_setup(workspace, api_key, mission_text, complexity_key, no_vcs, lc_data,
+                   provider=provider_id, base_url=provider_base_url, model=provider_model)
         return {}
 
     # ── Setup ─────────────────────────────────────────────────────────────────
-    results = _run_setup(workspace, api_key, mission_text, complexity_key, no_vcs, lc_data, _out=_out)
+    results = _run_setup(workspace, api_key, mission_text, complexity_key, no_vcs, lc_data,
+                         provider=provider_id, base_url=provider_base_url,
+                         model=provider_model, _out=_out)
 
     # ── Launch ────────────────────────────────────────────────────────────────
     pr()
@@ -401,7 +495,7 @@ def run_terminal_wizard(
     pr()
     try:
         from dotenv import load_dotenv
-        load_dotenv()
+        load_dotenv(Path(workspace) / ".env")
     except Exception:
         pass
     from .loop import run as _run_loop
@@ -418,6 +512,9 @@ def _run_setup(
     no_vcs: bool,
     lc_data: dict | None,
     *,
+    provider: str = "deepseek",
+    base_url: str = "",
+    model: str = "",
     _out=None,
 ) -> dict:
     """Execute the setup steps: env, mission, profile, lifecycle, git, workspace."""
@@ -429,8 +526,10 @@ def _run_setup(
         workspace=workspace,
         api_key=api_key,
         mission_text=mission_text,
-        provider="deepseek",
+        provider=provider,
         init_git=not no_vcs,
+        base_url=base_url,
+        model=model,
     )
 
     # Save complexity profile

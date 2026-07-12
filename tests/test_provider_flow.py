@@ -223,7 +223,7 @@ class TestWizardProviderTransparency:
         ws = self._make_ws(tmp_path)
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         # Mission is read first, then provider choice
-        lines = iter(["Build something", "", "2", "n"])  # "2" = Configure Later
+        lines = iter(["Build something", "", "4", "n"])  # "4" = Configure later
         reader = lambda p: next(lines, "n")
         result = self._run_wizard(ws, monkeypatch, api_key="", reader=reader,
                                   generate_preview=False)
@@ -257,7 +257,7 @@ class TestWizardProviderTransparency:
         ws = self._make_ws(tmp_path)
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         # Mission is read first, then provider choice
-        lines = iter(["Build something", "", "2", "n"])  # "2" = Configure Later
+        lines = iter(["Build something", "", "4", "n"])  # "4" = Configure later
         reader = lambda p: next(lines, "n")
         result = self._run_wizard(ws, monkeypatch, api_key="", reader=reader,
                                   generate_preview=False)
@@ -277,7 +277,7 @@ class TestWizardProviderTransparency:
             return None
 
         # Mission is read first, then provider choice
-        lines = iter(["Build something", "", "2", "n"])  # "2" = Configure Later
+        lines = iter(["Build something", "", "4", "n"])  # "4" = Configure later
         reader = lambda p: next(lines, "n")
         keys = iter(["enter"])
 

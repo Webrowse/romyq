@@ -152,9 +152,24 @@ def _approval_prompt(task: str) -> str:
 
 
 def run(workspace_path: str, until_complete: bool = False, approval_mode: bool = False) -> None:
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    # Load the workspace .env regardless of how run() was reached (CLI,
+    # wizard, direct call). Never overrides existing environment variables.
+    try:
+        from pathlib import Path as _Path
+        from dotenv import load_dotenv as _load_dotenv
+        _env_file = _Path(workspace_path) / ".env"
+        if _env_file.is_file():
+            _load_dotenv(_env_file)
+    except Exception:
+        pass
+
+    from .provider import api_key as planner_api_key
+    api_key = planner_api_key()
     if not api_key:
-        raise SystemExit("DEEPSEEK_API_KEY is not set. Add it to .env or your environment.")
+        raise SystemExit(
+            "No planner API key set. Add DEEPSEEK_API_KEY (or ROMYQ_PLANNER_API_KEY) "
+            "to .env or your environment."
+        )
 
     ws.bootstrap(workspace_path)
 

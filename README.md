@@ -153,9 +153,11 @@ DEEPSEEK_API_KEY=sk-...      # required — planning provider
 ROMYQ_CLAUDE_TIMEOUT=1800    # optional — per-task Claude timeout in seconds
 ```
 
-The planner defaults to DeepSeek but any OpenAI-compatible endpoint works:
+The planner defaults to DeepSeek but any OpenAI-compatible endpoint works —
+`romyq init` lets you pick DeepSeek, OpenAI, or a custom endpoint, or set it manually:
 
 ```
+ROMYQ_PLANNER_API_KEY=sk-...                      # overrides DEEPSEEK_API_KEY
 ROMYQ_PLANNER_BASE_URL=https://api.deepseek.com   # optional
 ROMYQ_PLANNER_MODEL=deepseek-chat                 # optional
 ROMYQ_PLANNER_TIMEOUT=600                         # optional, seconds per request
