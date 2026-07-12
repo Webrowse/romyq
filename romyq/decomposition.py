@@ -113,19 +113,17 @@ def decompose(
     """
     _source = "deepseek"
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        from .provider import chat as provider_chat
         prompt = _DECOMPOSE_PROMPT.format(mission=mission[:2000])
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
+        raw = provider_chat(
+            api_key,
+            [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
             max_tokens=1024,
         )
-        raw = response.choices[0].message.content.strip()
         tasks = _parse_tasks(raw)
     except Exception:
         tasks = []

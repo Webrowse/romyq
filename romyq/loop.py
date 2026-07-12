@@ -24,6 +24,7 @@ from .runner import (
     run as run_claude,
     _DEFAULT_WAIT_SECONDS,
 )
+from .provider import PlannerError
 from .runstate import RunState
 from .state import (
     clear_rate_limit,
@@ -389,12 +390,18 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
                 activity.log("Checking mission completion...")
                 set_phase(state, RunState.PLANNING)
                 save_state(state, s_path)
-                completed, reason = manager.evaluate_completion(
-                    api_key=api_key,
-                    mission=mission,
-                    workspace=workspace_path,
-                    git_log=repo_before["git_log"],
-                )
+                try:
+                    completed, reason = manager.evaluate_completion(
+                        api_key=api_key,
+                        mission=mission,
+                        workspace=workspace_path,
+                        git_log=repo_before["git_log"],
+                    )
+                except PlannerError as exc:
+                    # Non-fatal: skip this check; task generation below will
+                    # stop the loop cleanly if the planner stays unreachable.
+                    activity.log(f"Completion check skipped — {exc}")
+                    completed, reason = False, str(exc)
                 if completed:
                     activity.log(f"Mission complete — {reason}")
                     mark_completed(state)
@@ -496,18 +503,30 @@ def run(workspace_path: str, until_complete: bool = False, approval_mode: bool =
 
                 activity.log(f"Task {task_num}  mode={mode}")
                 activity.log("Asking DeepSeek...")
-                task = manager.generate_task(
-                    api_key=api_key,
-                    mission=mission,
-                    state=state_text,
-                    tasks_completed=state["tasks_completed"],
-                    git_log=repo_before["git_log"],
-                    git_status=repo_before["git_status"],
-                    mode=mode,
-                    workspace=workspace_path,
-                    notes=notes.load(store.notes_path(workspace_path)),
-                    state_dict=state,
-                )
+                try:
+                    task = manager.generate_task(
+                        api_key=api_key,
+                        mission=mission,
+                        state=state_text,
+                        tasks_completed=state["tasks_completed"],
+                        git_log=repo_before["git_log"],
+                        git_status=repo_before["git_status"],
+                        mode=mode,
+                        workspace=workspace_path,
+                        notes=notes.load(store.notes_path(workspace_path)),
+                        state_dict=state,
+                    )
+                except PlannerError as exc:
+                    activity.log(f"Planner unavailable — {exc}")
+                    activity.log(
+                        "Stopping cleanly. Fix the planner configuration or "
+                        "connection and run 'romyq run' again."
+                    )
+                    emit(e_path, ev.LOOP_STOPPED, reason="planner_error")
+                    mark_stopped(state)
+                    set_phase(state, RunState.STOPPED)
+                    save_state(state, s_path)
+                    return
                 activity.log("Task generated.")
                 key = _task_key(task)
 

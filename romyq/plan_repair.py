@@ -101,24 +101,22 @@ def repair_plan(
     # Ask DeepSeek for replacements
     new_tasks: list[dict] = []
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        from .provider import chat as provider_chat
         prompt = _REPAIR_PROMPT.format(
             n=n_repair,
             mission=mission[:1500],
             failed_tasks="\n".join(f"- {t}" for t in failed_task_texts),
             failure_reasons="\n".join(f"- {r}" for r in failure_reasons),
         )
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
+        raw = provider_chat(
+            api_key,
+            [
                 {"role": "system", "content": "You are a senior software architect."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.4,
             max_tokens=512,
         )
-        raw = response.choices[0].message.content.strip()
         new_tasks = [{"text": t, "status": "pending"} for t in _parse_tasks(raw)]
     except Exception:
         pass

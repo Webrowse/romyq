@@ -1951,10 +1951,6 @@ def cmd_version(args: argparse.Namespace) -> None:
         row("venv", sys.prefix)
     else:
         row("venv", "none")
-        print()
-        print("  Warning: not running inside a virtual environment.")
-        print("           If you are testing a wheel install, activate the venv first.")
-        print("           Quick check: python -m pip show romyq")
 
 
 # ── main ──────────────────────────────────────────────────────────────────────

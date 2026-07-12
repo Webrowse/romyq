@@ -96,8 +96,8 @@ class TestVenvDetection:
         out = capsys.readouterr().out
         assert "Warning" not in out
 
-    def test_warning_outside_venv(self, capsys):
-        """Warning is printed when not running inside any venv."""
+    def test_no_warning_outside_venv(self, capsys):
+        """No warning outside a venv — brew/pipx users run there normally."""
         ns = argparse.Namespace()
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
         with patch.dict(os.environ, env, clear=True), \
@@ -109,8 +109,8 @@ class TestVenvDetection:
             else:
                 cmd_version(ns)
         out = capsys.readouterr().out
-        assert "Warning" in out
-        assert "virtual environment" in out
+        assert "Warning" not in out
+        assert "venv" in out
 
     def test_venv_none_outside_venv(self, capsys):
         """venv line shows 'none' when not in a venv."""

@@ -290,18 +290,16 @@ def generate(
 
     _source = "deepseek"
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
+        from .provider import chat as provider_chat
+        raw = provider_chat(
+            api_key,
+            [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
             max_tokens=2048,
         )
-        raw = response.choices[0].message.content.strip()
         raw_phases = _parse_lifecycle_from_text(raw)
         if not raw_phases:
             raise ValueError("no phases parsed from LLM output")

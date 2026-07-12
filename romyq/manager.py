@@ -1,6 +1,4 @@
-from openai import OpenAI
-
-from . import store
+from . import provider, store
 from .context import load as load_context
 from .history import recent_text
 from .findings import unresolved_text
@@ -90,10 +88,6 @@ or:
 completed: false
 reason: <one sentence>
 """
-
-
-def _client(api_key: str) -> OpenAI:
-    return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 
 # ── task generation ───────────────────────────────────────────────────────────
@@ -186,15 +180,13 @@ Requirements:
 Output only the task.
 """
 
-    response = _client(api_key).chat.completions.create(
-        model="deepseek-chat",
-        messages=[
+    return provider.chat(
+        api_key,
+        [
             {"role": "system", "content": _MANAGER_SYSTEM},
             {"role": "user", "content": prompt},
         ],
     )
-
-    return response.choices[0].message.content.strip()
 
 
 # ── completion evaluation ─────────────────────────────────────────────────────
@@ -242,13 +234,12 @@ Unresolved Audit Findings:
 Has the mission been completed?
 """
 
-    response = _client(api_key).chat.completions.create(
-        model="deepseek-chat",
-        messages=[
+    text = provider.chat(
+        api_key,
+        [
             {"role": "system", "content": _EVALUATOR_SYSTEM},
             {"role": "user", "content": prompt},
         ],
         temperature=0,
     )
-
-    return _parse_completion(response.choices[0].message.content.strip())
+    return _parse_completion(text)
