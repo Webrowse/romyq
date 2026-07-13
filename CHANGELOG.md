@@ -1,33 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-07-13)
 
-**Planner robustness, configurable provider endpoint, install fixes.**
+### New
 
-### Provider choice
-- **Wizard**: `romyq init` now offers DeepSeek, OpenAI, or any custom OpenAI-compatible endpoint. Typing `b` at any sub-prompt returns to the provider menu, so a wrong choice can be corrected. Non-DeepSeek selections write `ROMYQ_PLANNER_API_KEY/BASE_URL/MODEL` to `.env`.
-- **`provider.api_key()`**: `ROMYQ_PLANNER_API_KEY` takes precedence, `DEEPSEEK_API_KEY` remains the backward-compatible fallback. `romyq run` and `romyq doctor` accept either.
+- `romyq init` now supports DeepSeek, OpenAI, or any custom OpenAI-compatible endpoint. Type `b` at any prompt to go back and pick again.
+- `ROMYQ_PLANNER_API_KEY`, `ROMYQ_PLANNER_BASE_URL`, and `ROMYQ_PLANNER_MODEL` configure a custom planner endpoint. `ROMYQ_PLANNER_API_KEY` takes precedence over `DEEPSEEK_API_KEY`; `DEEPSEEK_API_KEY` still works unchanged.
 
-### Bug fixes
-- **`.env` never loaded for installed CLIs**: `load_dotenv()` with no arguments searches upward from the *calling file* — site-packages for a brew/pipx/global pip install — so the project `.env` was silently ignored and `romyq run` reported a missing API key even when `.env` was correct. All commands now load the workspace (or CWD) `.env` explicitly. Development checkouts masked this because the search found the repo's own `.env`.
+### Fixed
 
-### Robustness
-- **`provider.py` (new)**: Single home for the planning-provider client. Endpoint, model, and request timeout are overridable via `ROMYQ_PLANNER_BASE_URL`, `ROMYQ_PLANNER_MODEL`, and `ROMYQ_PLANNER_TIMEOUT` (any OpenAI-compatible API). Connect timeout is 5s so an unreachable endpoint fails fast.
-- **`loop.py`**: A planner failure during task generation (network down, key rejected, rate limit) now stops the run cleanly with an actionable message instead of a traceback. A failed completion check is skipped instead of killing the loop.
-- **`manager.py`**: Guards against empty planner responses.
+- `.env` was not loaded for installed CLIs (Homebrew, pipx, global pip). `load_dotenv()` searches from the package install location, not the project directory, so a correct `.env` was silently ignored. All commands now load `.env` from the workspace directly.
+- A planner request failure during task generation (network error, bad key, rate limit) crashed the run with a traceback. It now stops cleanly with an actionable message.
+- Homebrew formula installed a virtualenv with no dependencies. Every command except `--help` crashed with `ModuleNotFoundError`. Fixed in the tap; the formula test now verifies the dependency chain.
+- PyPI project URLs pointed at a nonexistent GitHub repository. Now point to `Webrowse/romyq` and romyq.com.
+- README quick start referenced `.env.example`, a file that does not exist in a user's project.
 
-### Packaging & docs
-- Homebrew formula installed a virtualenv with **no dependencies** — every real command crashed with `ModuleNotFoundError`. Fixed in the tap (webrowse/street); the formula test now imports the full dependency chain.
-- PyPI project URLs pointed at a nonexistent GitHub repository; now `Webrowse/romyq` plus romyq.com links.
-- README: quick start no longer references `.env.example` (not present in user projects); documents Homebrew install, the eight lifecycle commands, and planner configuration.
+### Changed
 
-### Cleanup
-- Removed `health_score.py` (never wired into any command) and an obfuscated no-op block in `constitution.py`.
-- `cli.py`: 33 copies of workspace-resolution boilerplate folded into `_require_workspace()` (−187 lines).
-- `romyq version` no longer prints a venv warning aimed at maintainers.
-
-### Tests
-- New: `tests/test_provider.py` — provider configuration and error-mapping tests.
+- Planner connection settings (base URL, model, timeout) are now centralized in one module instead of duplicated across four.
+- `cli.py` workspace-resolution boilerplate (33 call sites) consolidated into one helper.
+- Removed `health_score.py`, which was never wired into any command.
+- `romyq version` no longer prints a maintainer-facing venv warning to end users.
 
 ---
 
